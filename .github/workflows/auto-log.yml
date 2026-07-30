@@ -54,16 +54,15 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai proses training Deep Neural Network (Extended History + Expanded Layers + Pure Price Action)...")
+          print("Memulai proses training Deep Neural Network (Pips/Points Evaluation Added)...")
 
-          # --- 1. Ambil Data Historis Jangka Panjang (1 Tahun untuk Melatih Memori Luas) ---
+          # --- 1. Ambil Data Historis Jangka Panjang ---
           def get_long_df(interval, period):
               df = yf.download("GC=F", period=period, interval=interval)
               if isinstance(df.columns, pd.MultiIndex):
                   df.columns = df.columns.get_level_values(0)
               return df
 
-          # Ambil data 1 jam selama 1 tahun ke belakang agar punya pandangan tren makro yang matang
           df_macro = get_long_df("60m", "1y")
 
           if not df_macro.empty:
@@ -71,7 +70,6 @@ jobs:
                   close = df_macro['Close'].squeeze()
                   
                   features_df = pd.DataFrame(index=close.index)
-                  # Memperluas memori melihat ke belakang hingga 48 candle (2 hari penuh di chart 1h, atau rentang luas)
                   lookback_window = 48
                   for i in range(1, lookback_window + 1):
                       features_df[f'lag_{i}'] = close.pct_change(i)
@@ -83,7 +81,6 @@ jobs:
                   X = features_df[feature_cols]
                   y = features_df['target']
 
-                  # Arsitektur Hidden Layers diperbesar (128, 64, 32) untuk kapasitas mikir yang lebih kompleks
                   model = make_pipeline(
                       StandardScaler(),
                       MLPClassifier(
@@ -111,7 +108,7 @@ jobs:
           prediction, confidence = -1, 0
           live_features = []
 
-          # --- 3. Ambil Data 1h Terakhir untuk Prediksi Live (Menyesuaikan dengan rentang lag 48) ---
+          # --- 3. Ambil Data 1h Terakhir untuk Prediksi Live ---
           df_live = get_long_df("60m", "60d")
           if not df_live.empty and os.path.exists("model_pure.pkl"):
               try:
@@ -133,7 +130,7 @@ jobs:
               except Exception as e:
                   print("Error saat prediksi live:", e)
 
-          # --- 4. Evaluasi Log, Hitung Performa, & Catat Log Baru ---
+          # --- 4. Evaluasi Log, Hitung Pips/Selisih, & Catat Log Baru ---
           now_utc = datetime.datetime.now(datetime.timezone.utc)
           current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
           current_date_str = now_utc.strftime("%Y-%m-%d")
@@ -147,20 +144,28 @@ jobs:
               except:
                   logs = []
 
-          # Cek hasil prediksi sebelumnya
+          # Cek hasil prediksi sebelumnya & hitung selisih pips/poin harga
           evaluation_text = "Siklus awal / Belum ada evaluasi sebelumnya."
           if logs and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
               last_price = last_log.get("spot_price")
+              
               if last_price and last_pred is not None:
+                  price_diff = spot_price - last_price
+                  # Untuk XAUUSD, selisih 1.0 setara dengan 10 pips (atau kita tampilkan langsung nilai selisih dolarnya)
+                  diff_pips = round(price_diff * 10, 1)
+                  
                   actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
+                  
                   if last_pred == actual_direction:
-                      evaluation_text = "✅ Prediksi sebelumnya TEPAT."
+                      evaluation_text = f"✅ TEPAT | Harga bergerak {abs(round(price_diff, 2))} poin ({abs(diff_pips)} pips) searah."
                       last_log["result"] = "WIN"
+                      last_log["diff_pips"] = abs(diff_pips)
                   else:
-                      evaluation_text = "❌ Prediksi sebelumnya MELESET (Loss)."
+                      evaluation_text = f"❌ MELESET (Loss) | Meleset sejauh {abs(round(price_diff, 2))} poin ({abs(diff_pips)} pips) berlawanan arah."
                       last_log["result"] = "LOSS"
+                      last_log["diff_pips"] = abs(diff_pips)
 
           # Simpan log baru
           new_log = {
@@ -169,7 +174,8 @@ jobs:
               "spot_price": spot_price,
               "prediction": prediction,
               "confidence": confidence,
-              "result": None 
+              "result": None,
+              "diff_pips": 0
           }
           logs.append(new_log)
           if len(logs) > 200:
@@ -178,22 +184,33 @@ jobs:
           with open(log_file, "w") as f:
               json.dump(logs, f, indent=4)
 
-          # --- Hitung Performa Harian ---
+          # --- Hitung Performa Harian & Total Pips Akumulasi ---
           today_wins = 0
           today_losses = 0
+          total_pips_won = 0
+          total_pips_lost = 0
+          
           for log in logs:
               if log.get("date") == current_date_str:
                   res = log.get("result")
+                  pips = log.get("diff_pips", 0)
                   if res == "WIN":
                       today_wins += 1
+                      total_pips_won += pips
                   elif res == "LOSS":
                       today_losses += 1
+                      total_pips_lost += pips
           
           total_today = today_wins + today_losses
           win_rate = int((today_wins / total_today * 100)) if total_today > 0 else 0
-          perf_text = f"📊 Win: {today_wins} | Loss: {today_losses} (Win Rate: {win_rate}%)" if total_today > 0 else "📊 Belum ada data selesai hari ini."
+          
+          if total_today > 0:
+              net_pips = total_pips_won - total_pips_lost
+              perf_text = f"📊 Win: {today_wins} | Loss: {today_losses} (Win Rate: {win_rate}%)\n⚖️ Net Pips Hari Ini: `{net_pips:+.1f}` pips"
+          else:
+              perf_text = "📊 Belum ada data selesai hari ini."
 
-          # --- 5. Statement AI Murni Berdasarkan Analisis Otak Model ---
+          # --- 5. Statement AI Murni ---
           if prediction == 1:
               ai_statement = "Dari pembacaan pola riwayat jangka panjang, struktur harga mengindikasikan dorongan akumulasi naik."
           elif prediction == 0:
@@ -215,7 +232,7 @@ jobs:
           )
 
           send_telegram(msg)
-          print("Pesan Deep Neural Network berhasil dikirim ke Telegram!")
+          print("Pesan dengan kalkulasi pips berhasil dikirim ke Telegram!")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -229,5 +246,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Upgrade to Deep Neural Network (1-year data, 48 lag, deep layers)" || echo "No changes"
+          git commit -m "Add precise pips/points calculation to evaluation log" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
