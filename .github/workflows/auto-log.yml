@@ -1,1 +1,233 @@
+name: Auto Commit Signal Log + Keepalive
+
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: '*/15 * * * *'    # tiap 15 menit UTC
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install requests pandas ta yfinance scikit-learn joblib
+
+      - name: Run Auto-Training & Advanced Neural Network Prediction
+        run: |
+          python - <<'EOF'
+          import os, json, datetime, requests
+          import pandas as pd
+          import numpy as np
+          import ta
+          import yfinance as yf
+          import joblib
+          from sklearn.neural_network import MLPClassifier
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.pipeline import make_pipeline
+
+          print("Memulai proses otomatis training Neural Network dan prediksi ML...")
+
+          # --- 1. Ambil Data Historis dari Yahoo Finance untuk Training & Fitur ---
+          def get_df(interval):
+              df = yf.download("GC=F", period="30d", interval=interval)
+              if isinstance(df.columns, pd.MultiIndex):
+                  df.columns = df.columns.get_level_values(0)
+              return df
+
+          df1h = get_df("60m")
+
+          if not df1h.empty:
+              try:
+                  close = df1h['Close'].squeeze()
+                  high = df1h['High'].squeeze()
+                  low = df1h['Low'].squeeze()
+
+                  # Buat Fitur Indikator untuk Training
+                  df1h['ema_fast'] = ta.trend.EMAIndicator(close, window=9).ema_indicator()
+                  df1h['ema_slow'] = ta.trend.EMAIndicator(close, window=21).ema_indicator()
+                  df1h['rsi'] = ta.momentum.RSIIndicator(close, window=14).rsi()
+                  df1h['atr'] = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
+                  
+                  df1h['ema_diff'] = df1h['ema_fast'] - df1h['ema_slow']
+                  df1h['price_vs_ema'] = close - df1h['ema_fast']
+
+                  # Target: 1 jika harga periode berikutnya naik, 0 jika turun
+                  df1h['target'] = (close.shift(-1) > close).astype(int)
+                  df1h = df1h.dropna()
+
+                  feature_cols = ['ema_diff', 'rsi', 'atr', 'price_vs_ema']
+                  X = df1h[feature_cols]
+                  y = df1h['target']
+
+                  # Training Model Neural Network (MLP) dengan Standard Scaler secara otomatis
+                  model = make_pipeline(
+                      StandardScaler(),
+                      MLPClassifier(
+                          hidden_layer_sizes=(32, 16), 
+                          activation='relu', 
+                          solver='adam', 
+                          max_iter=500, 
+                          random_state=42
+                      )
+                  )
+                  model.fit(X, y)
+                  print("Model Neural Network (MLP) berhasil dilatih ulang secara otomatis.")
+
+                  # Simpan model sementara untuk referensi
+                  joblib.dump(model, "model.pkl")
+
+              except Exception as e:
+                  print("Error saat training otomatis:", e)
+
+          # --- 2. Ambil Harga Spot Live dari xaus.com ---
+          try:
+              r = requests.get("https://xaus.com/api/v1/spot")
+              data = r.json()
+              spot_price = float(data.get("spot_usd_oz"))
+              print("Spot price (xaus.com):", spot_price)
+          except Exception as e:
+              print("API xaus.com error:", e)
+              spot_price = None
+
+          prediction, confidence = -1, 0
+
+          # --- 3. Ambil Data 15m Terakhir untuk Prediksi Live ---
+          df15 = get_df("15m")
+          if not df15.empty and spot_price is not None and os.path.exists("model.pkl"):
+              try:
+                  close15 = df15['Close'].squeeze()
+                  high15  = df15['High'].squeeze()
+                  low15   = df15['Low'].squeeze()
+
+                  ema_fast = ta.trend.EMAIndicator(close15, window=9).ema_indicator().iloc[-1]
+                  ema_slow = ta.trend.EMAIndicator(close15, window=21).ema_indicator().iloc[-1]
+                  rsi      = ta.momentum.RSIIndicator(close15, window=14).rsi().iloc[-1]
+                  atr      = ta.volatility.AverageTrueRange(high15, low15, close15, window=14).average_true_range().iloc[-1]
+
+                  ema_diff = float(ema_fast - ema_slow)
+                  price_vs_ema = float(spot_price - ema_fast)
+
+                  features = np.array([[ema_diff, float(rsi), float(atr), price_vs_ema]])
+
+                  ml_model = joblib.load("model.pkl")
+                  pred_class = ml_model.predict(features)[0]
+                  proba = ml_model.predict_proba(features)[0]
+                  conf_score = int(max(proba) * 100)
+
+                  prediction = int(pred_class)
+                  confidence = conf_score
+                  print(f"Prediksi Neural Network Live -> Arah: {prediction}, Confidence: {confidence}%")
+
+              except Exception as e:
+                  print("Error saat prediksi live:", e)
+                  prediction, confidence = 0, 50
+
+          # --- 4. Kelola signal.json & Evaluasi signal_log.json (Win/Loss + Pips hanya saat Balik Arah) ---
+          current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+          signal = {
+              "time": current_time_str,
+              "price": spot_price,
+              "prediction": prediction,
+              "confidence": confidence,
+              "status": "PENDING",
+              "pips": 0.0
+          }
+
+          with open("signal.json","w") as f:
+              json.dump(signal, f, indent=2)
+
+          log_file = "signal_log.json"
+          if os.path.exists(log_file):
+              with open(log_file,"r") as f:
+                  signal_data = json.load(f)
+                  if not isinstance(signal_data, list):
+                      signal_data = []
+          else:
+              signal_data = []
+
+          # Gabungkan sementara untuk mendeteksi titik balik arah (reversal)
+          temp_eval_data = signal_data + [signal]
+
+          # EVALUASI HANYA KETIKA TERJADI BALIK ARAH SINYAL
+          if len(temp_eval_data) > 1 and spot_price is not None:
+              for i in range(len(signal_data)):
+                  if "status" not in signal_data[i] or signal_data[i]["status"] == "PENDING":
+                      pred_i = signal_data[i].get("prediction")
+                      price_i = signal_data[i].get("price")
+                      
+                      # Cari indeks pertama setelahnya di mana sinyal berubah arah
+                      reversal_idx = -1
+                      for j in range(i + 1, len(temp_eval_data)):
+                          pred_j = temp_eval_data[j].get("prediction")
+                          if pred_j != -1 and pred_j != pred_i:
+                              reversal_idx = j
+                              break
+                      
+                      # Jika ditemukan titik balik arah, hitung Pips/Win/Loss berdasarkan harga di titik balik tersebut
+                      if reversal_idx != -1:
+                          eval_price = temp_eval_data[reversal_idx].get("price")
+                          
+                          if price_i is not None and eval_price is not None:
+                              price_diff = eval_price - price_i
+                              
+                              if eval_price > price_i:
+                                  actual_movement = 1
+                              elif eval_price < price_i:
+                                  actual_movement = 0
+                              else:
+                                  actual_movement = -1
+
+                              pip_value = round(abs(price_diff) * 10, 1)
+
+                              if actual_movement == -1:
+                                  signal_data[i]["status"] = "FLAT"
+                                  signal_data[i]["pips"] = 0.0
+                              elif pred_i == actual_movement:
+                                  signal_data[i]["status"] = "WIN"
+                                  signal_data[i]["pips"] = pip_value  
+                              else:
+                                  signal_data[i]["status"] = "LOSS"
+                                  signal_data[i]["pips"] = -pip_value 
+                          else:
+                              signal_data[i]["status"] = "INVALID"
+                              signal_data[i]["pips"] = 0.0
+
+          # Masukkan sinyal baru ke list log
+          signal_data.append(signal)
+
+          # Batasi history 50 data terakhir
+          if len(signal_data) > 50:
+              signal_data = signal_data[-50:]
+
+          with open(log_file,"w") as f:
+              json.dump(signal_data, f, indent=2)
+
+          with open("keepalive.txt","w") as f:
+              f.write("Last run (Auto Train & Neural Network): " + current_time_str)
+          EOF
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git stash
+          git pull origin main --rebase || echo "No rebase needed"
+          git stash pop || echo "No stash to pop"
+          git add signal.json signal_log.json model.pkl keepalive.txt
+          git commit -m "Auto train Neural Network and update reversal-based signal evaluation" || echo "No changes"
+          git push https://x-access-token:${GH_TOKEN}@github.com/dhntan/doomsday.git HEAD:main
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
