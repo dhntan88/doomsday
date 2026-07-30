@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XAUUSD Signal Machine Learning</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; }
+    h1 { color: #333; }
+    #latest { margin-top: 10px; font-size: 16px; padding: 10px; border-radius: 5px; }
+    .strong { background-color: #d4edda; color: #155724; }   /* hijau */
+    .weak { background-color: #f8d7da; color: #721c24; }     /* merah */
+    .medium { background-color: #fff3cd; color: #856404; }   /* kuning */
+    .stats-box {
+        background: #e2f0d9;
+        border: 1px solid #c8e1b7;
+        padding: 12px;
+        border-radius: 5px;
+        margin-top: 15px;
+        margin-bottom: 20px;
+        font-weight: bold;
+        color: #274e13;
+    }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #f4f4f4; }
+    tr:nth-child(even) { background-color: #fafafa; }
+    tr:hover { background-color: #f1f1f1; }
+    .badge-buy { color: #27ae60; font-weight: bold; }
+    .badge-sell { color: #c0392b; font-weight: bold; }
+    .status-win { background-color: #d4edda; color: #155724; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .status-loss { background-color: #f8d7da; color: #721c24; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .status-pending { background-color: #e2e3e5; color: #383d41; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+    .pips-pos { color: #27ae60; font-weight: bold; }
+    .pips-neg { color: #c0392b; font-weight: bold; }
+    canvas { margin-top: 30px; background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h1>XAUUSD Signal Machine Learning by Dhntan</h1>
+  <div id="latest">Loading latest signal...</div>
+  <div class="stats-box" id="stats-summary">Statistik Evaluasi: Menghitung...</div>
+
+  <table id="signalTable">
+    <thead>
+      <tr>
+        <th>Time (UTC)</th>
+        <th>Time (WIB)</th>
+        <th>Price</th>
+        <th>Prediction</th>
+        <th>Confidence (%)</th>
+        <th>Pips</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <canvas id="signalChart" width="800" height="400"></canvas>
+
+  <script>
+    let myChart = null;
+
+    // Fungsi bantu untuk mengonversi string waktu UTC ke format WIB (menggunakan cara yang akurat)
+    function convertToWIB(utcTimeString) {
+      try {
+        if (!utcTimeString) return "-";
+        const date = new Date(utcTimeString.endsWith('Z') ? utcTimeString : utcTimeString.replace(' ', 'T') + 'Z');
+        if (isNaN(date.getTime())) return utcTimeString;
+        
+        return date.toLocaleString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).replace(/\./g, '-');
+      } catch (e) {
+        return utcTimeString;
+      }
+    }
+
+    async function loadSignals() {
+      try {
+        const response = await fetch('signal_log.json?t=' + new Date().getTime());
+        const data = await response.json();
+        if (!Array.isArray(data) || data.length === 0) return;
+
+        const tbody = document.querySelector('#signalTable tbody');
+        tbody.innerHTML = '';
+
+        let totalWins = 0;
+        let totalLosses = 0;
+        let totalPips = 0.0;
+
+        // Tampilkan riwayat terbaru di atas
+        data.slice().reverse().forEach(signal => {
+          const wibTime = convertToWIB(signal.time);
+          const predText = signal.prediction === 1 ? 'BUY' : (signal.prediction === 0 ? 'SELL' : 'FLAT');
+          const predClass = signal.prediction === 1 ? 'badge-buy' : 'badge-sell';
+
+          let status = signal.status || 'PENDING';
+          let statusClass = 'status-pending';
+          if (status === 'WIN') {
+            statusClass = 'status-win';
+            totalWins++;
+          } else if (status === 'LOSS') {
+            statusClass = 'status-loss';
+            totalLosses++;
+          }
+
+          let pipsVal = signal.pips !== undefined ? signal.pips : 0.0;
+          if (status === 'WIN' || status === 'LOSS') {
+            totalPips += pipsVal;
+          }
+
+          let pipsClass = pipsVal > 0 ? 'pips-pos' : (pipsVal < 0 ? 'pips-neg' : '');
+          let pipsDisplay = pipsVal > 0 ? `+${pipsVal}` : `${pipsVal}`;
+
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${signal.time}</td>
+            <td><strong>${wibTime}</strong></td>
+            <td>${signal.price !== null ? signal.price : '-'}</td>
+            <td><span class="${predClass}">${predText}</span></td>
+            <td>${signal.confidence}%</td>
+            <td><span class="${pipsClass}">${status === 'PENDING' ? '-' : pipsDisplay}</span></td>
+            <td><span class="${statusClass}">${status}</span></td>
+          `;
+          tbody.appendChild(row);
+        });
+
+        // Hitung Win Rate & Total Pips
+        let totalCompleted = totalWins + totalLosses;
+        let winRate = totalCompleted > 0 ? ((totalWins / totalCompleted) * 100).toFixed(1) : 0.0;
+
+        const statsBox = document.getElementById('stats-summary');
+        let pipsFormatted = totalPips > 0 ? `+${totalPips.toFixed(1)}` : `${totalPips.toFixed(1)}`;
+        statsBox.innerHTML = `Statistik Evaluasi: Total WIN: ${totalWins} | Total LOSS: ${totalLosses} | Win Rate: ${winRate}% | Total Pips: <span class="${totalPips >= 0 ? 'pips-pos' : 'pips-neg'}">${pipsFormatted}</span>`;
+
+        // Sinyal terbaru
+        const latest = data[data.length - 1];
+        const latestWib = convertToWIB(latest.time);
+        const latestEl = document.getElementById('latest');
+        latestEl.innerHTML =
+          `<strong>Latest &rarr;</strong> Time (WIB): ${latestWib} | Price: $${latest.price} | Signal: <span class="${latest.prediction === 1 ? 'badge-buy' : 'badge-sell'}">${latest.prediction === 1 ? 'BUY' : 'SELL'}</span>, Confidence: ${latest.confidence}%`;
+
+        latestEl.className = '';
+        if (latest.confidence >= 70) {
+          latestEl.classList.add('strong');
+        } else if (latest.confidence <= 50) {
+          latestEl.classList.add('weak');
+        } else {
+          latestEl.classList.add('medium');
+        }
+
+        // Chart.js grafik
+        const ctx = document.getElementById('signalChart').getContext('2d');
+        const chartData = {
+          labels: data.map(s => convertToWIB(s.time)), 
+          datasets: [
+            {
+              label: 'Price',
+              data: data.map(s => s.price),
+              borderColor: 'blue',
+              fill: false
+            },
+            {
+              label: 'Confidence',
+              data: data.map(s => s.confidence),
+              borderColor: 'orange',
+              fill: false,
+              yAxisID: 'y1'
+            },
+            {
+              label: 'BUY signals',
+              data: data.map(s => s.prediction === 1 ? s.price : null),
+              borderColor: 'green',
+              pointBackgroundColor: 'green',
+              showLine: false,
+              pointStyle: 'triangle',
+              pointRadius: 8
+            },
+            {
+              label: 'SELL signals',
+              data: data.map(s => s.prediction === 0 ? s.price : null),
+              borderColor: 'red',
+              pointBackgroundColor: 'red',
+              showLine: false,
+              pointStyle: 'triangle',
+              pointRadius: 8,
+              rotation: 180
+            }
+          ]
+        };
+
+        if (myChart) {
+          myChart.destroy();
+        }
+
+        myChart = new Chart(ctx, {
+          type: 'line',
+          data: chartData,
+          options: {
+            scales: {
+              y: { type: 'linear', position: 'left', title: { display: true, text: 'Price' } },
+              y1: { type: 'linear', position: 'right', title: { display: true, text: 'Confidence (%)' }, grid: { drawOnChartArea: false } }
+            }
+          }
+        });
+      } catch (err) {
+        console.error('Error loading signals:', err);
+      }
+    }
+
+    loadSignals();
+    setInterval(loadSignals, 30000);
+  </script>
+</body>
+</html>
