@@ -227,6 +227,4 @@ jobs:
           git stash pop || echo "No stash to pop"
           git add signal.json signal_log.json model.pkl keepalive.txt
           git commit -m "Auto train Neural Network and update reversal-based signal evaluation" || echo "No changes"
-          git push https://x-access-token:${GH_TOKEN}@github.com/dhntan88/doomsday.git HEAD:main
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
