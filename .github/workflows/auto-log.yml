@@ -230,4 +230,3 @@ jobs:
           git push https://x-access-token:${GH_TOKEN}@github.com/dhntan88/doomsday.git HEAD:main
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-
