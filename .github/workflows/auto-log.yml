@@ -1,4 +1,4 @@
-name: Auto Commit Signal Log + Keepalive
+name: Auto Commit Signal Log + Telegram
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         run: |
           pip install requests pandas ta yfinance scikit-learn joblib
 
-      - name: Run Auto-Training & Advanced Neural Network Prediction
+      - name: Run Auto-Training & Telegram Signal Bot
         run: |
           python - <<'EOF'
           import os, json, datetime, requests
@@ -36,9 +36,28 @@ jobs:
           from sklearn.preprocessing import StandardScaler
           from sklearn.pipeline import make_pipeline
 
+          # Konfigurasi Telegram (mengambil dari Secrets GitHub)
+          TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+          TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+          def send_telegram(message):
+              if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+                  print("Telegram Token atau Chat ID belum diset di Secrets!")
+                  return
+              url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+              payload = {
+                  "chat_id": TELEGRAM_CHAT_ID,
+                  "text": message,
+                  "parse_mode": "Markdown"
+              }
+              try:
+                  requests.post(url, json=payload, timeout=10)
+              except Exception as e:
+                  print("Gagal kirim pesan ke Telegram:", e)
+
           print("Memulai proses otomatis training Neural Network dan prediksi ML...")
 
-          # --- 1. Ambil Data Historis dari Yahoo Finance untuk Training & Fitur ---
+          # --- 1. Ambil Data Historis dari Yahoo Finance untuk Training ---
           def get_df(interval):
               df = yf.download("GC=F", period="30d", interval=interval)
               if isinstance(df.columns, pd.MultiIndex):
@@ -53,7 +72,6 @@ jobs:
                   high = df1h['High'].squeeze()
                   low = df1h['Low'].squeeze()
 
-                  # Buat Fitur Indikator untuk Training
                   df1h['ema_fast'] = ta.trend.EMAIndicator(close, window=9).ema_indicator()
                   df1h['ema_slow'] = ta.trend.EMAIndicator(close, window=21).ema_indicator()
                   df1h['rsi'] = ta.momentum.RSIIndicator(close, window=14).rsi()
@@ -62,7 +80,6 @@ jobs:
                   df1h['ema_diff'] = df1h['ema_fast'] - df1h['ema_slow']
                   df1h['price_vs_ema'] = close - df1h['ema_fast']
 
-                  # Target: 1 jika harga periode berikutnya naik, 0 jika turun
                   df1h['target'] = (close.shift(-1) > close).astype(int)
                   df1h = df1h.dropna()
 
@@ -70,7 +87,6 @@ jobs:
                   X = df1h[feature_cols]
                   y = df1h['target']
 
-                  # Training Model Neural Network (MLP) dengan Standard Scaler secara otomatis
                   model = make_pipeline(
                       StandardScaler(),
                       MLPClassifier(
@@ -82,11 +98,7 @@ jobs:
                       )
                   )
                   model.fit(X, y)
-                  print("Model Neural Network (MLP) berhasil dilatih ulang secara otomatis.")
-
-                  # Simpan model sementara untuk referensi
                   joblib.dump(model, "model.pkl")
-
               except Exception as e:
                   print("Error saat training otomatis:", e)
 
@@ -95,7 +107,6 @@ jobs:
               r = requests.get("https://xaus.com/api/v1/spot")
               data = r.json()
               spot_price = float(data.get("spot_usd_oz"))
-              print("Spot price (xaus.com):", spot_price)
           except Exception as e:
               print("API xaus.com error:", e)
               spot_price = None
@@ -127,104 +138,34 @@ jobs:
 
                   prediction = int(pred_class)
                   confidence = conf_score
-                  print(f"Prediksi Neural Network Live -> Arah: {prediction}, Confidence: {confidence}%")
-
               except Exception as e:
                   print("Error saat prediksi live:", e)
-                  prediction, confidence = 0, 50
 
-          # --- 4. Kelola signal.json & Evaluasi signal_log.json (Win/Loss + Pips hanya saat Balik Arah) ---
+          # --- 4. Evaluasi & Kirim ke Telegram ---
           current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-          signal = {
-              "time": current_time_str,
-              "price": spot_price,
-              "prediction": prediction,
-              "confidence": confidence,
-              "status": "PENDING",
-              "pips": 0.0
-          }
+          # Tentukan arah sinyal teks
+          arah_teks = "📈 BUY / NAIK" if prediction == 1 else ("📉 SELL / TURUN" if prediction == 0 else "FLAT/NETRAL")
 
-          with open("signal.json","w") as f:
-              json.dump(signal, f, indent=2)
+          msg = (
+              f"🤖 *XAUUSD Neural Network Signal*\n"
+              f"⏱ Waktu (UTC): `{current_time_str}`\n"
+              f"💰 Harga Spot: `${spot_price}`\n"
+              f"🔮 Prediksi: *{arah_teks}*\n"
+              f"📊 Confidence: `{confidence}%`"
+          )
 
-          log_file = "signal_log.json"
-          if os.path.exists(log_file):
-              with open(log_file,"r") as f:
-                  signal_data = json.load(f)
-                  if not isinstance(signal_data, list):
-                      signal_data = []
-          else:
-              signal_data = []
-
-          # Gabungkan sementara untuk mendeteksi titik balik arah (reversal)
-          temp_eval_data = signal_data + [signal]
-
-          # EVALUASI HANYA KETIKA TERJADI BALIK ARAH SINYAL
-          if len(temp_eval_data) > 1 and spot_price is not None:
-              for i in range(len(signal_data)):
-                  if "status" not in signal_data[i] or signal_data[i]["status"] == "PENDING":
-                      pred_i = signal_data[i].get("prediction")
-                      price_i = signal_data[i].get("price")
-                      
-                      # Cari indeks pertama setelahnya di mana sinyal berubah arah
-                      reversal_idx = -1
-                      for j in range(i + 1, len(temp_eval_data)):
-                          pred_j = temp_eval_data[j].get("prediction")
-                          if pred_j != -1 and pred_j != pred_i:
-                              reversal_idx = j
-                              break
-                      
-                      # Jika ditemukan titik balik arah, hitung Pips/Win/Loss berdasarkan harga di titik balik tersebut
-                      if reversal_idx != -1:
-                          eval_price = temp_eval_data[reversal_idx].get("price")
-                          
-                          if price_i is not None and eval_price is not None:
-                              price_diff = eval_price - price_i
-                              
-                              if eval_price > price_i:
-                                  actual_movement = 1
-                              elif eval_price < price_i:
-                                  actual_movement = 0
-                              else:
-                                  actual_movement = -1
-
-                              pip_value = round(abs(price_diff) * 10, 1)
-
-                              if actual_movement == -1:
-                                  signal_data[i]["status"] = "FLAT"
-                                  signal_data[i]["pips"] = 0.0
-                              elif pred_i == actual_movement:
-                                  signal_data[i]["status"] = "WIN"
-                                  signal_data[i]["pips"] = pip_value  
-                              else:
-                                  signal_data[i]["status"] = "LOSS"
-                                  signal_data[i]["pips"] = -pip_value 
-                          else:
-                              signal_data[i]["status"] = "INVALID"
-                              signal_data[i]["pips"] = 0.0
-
-          # Masukkan sinyal baru ke list log
-          signal_data.append(signal)
-
-          # Batasi history 50 data terakhir
-          if len(signal_data) > 50:
-              signal_data = signal_data[-50:]
-
-          with open(log_file,"w") as f:
-              json.dump(signal_data, f, indent=2)
-
-          with open("keepalive.txt","w") as f:
-              f.write("Last run (Auto Train & Neural Network): " + current_time_str)
+          send_telegram(msg)
+          print("Pesan sinyal berhasil dikirim ke Telegram!")
           EOF
 
-      - name: Commit changes
+      - name: Commit changes (Simpan Model Saja)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git stash
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
-          git add signal.json signal_log.json model.pkl keepalive.txt
-          git commit -m "Auto train Neural Network and update reversal-based signal evaluation" || echo "No changes"
+          git add model.pkl
+          git commit -m "Auto train and update model.pkl" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
