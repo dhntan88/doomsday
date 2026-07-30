@@ -35,13 +35,12 @@ jobs:
           from sklearn.preprocessing import StandardScaler
           from sklearn.pipeline import make_pipeline
 
-          # Konfigurasi Telegram (mengambil dari Secrets GitHub)
           TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
           TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
           def send_telegram(message):
               if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-                  print("Telegram Token atau Chat ID belum diset di Secrets!")
+                  print("Telegram Token/Chat ID belum diset!")
                   return
               url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
               payload = {
@@ -54,49 +53,9 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai proses training Deep Neural Network (Pips/Points Evaluation Added)...")
+          print("Memulai proses bot dengan manajemen jeda & filter order...")
 
-          # --- 1. Ambil Data Historis Jangka Panjang ---
-          def get_long_df(interval, period):
-              df = yf.download("GC=F", period=period, interval=interval)
-              if isinstance(df.columns, pd.MultiIndex):
-                  df.columns = df.columns.get_level_values(0)
-              return df
-
-          df_macro = get_long_df("60m", "1y")
-
-          if not df_macro.empty:
-              try:
-                  close = df_macro['Close'].squeeze()
-                  
-                  features_df = pd.DataFrame(index=close.index)
-                  lookback_window = 48
-                  for i in range(1, lookback_window + 1):
-                      features_df[f'lag_{i}'] = close.pct_change(i)
-
-                  features_df['target'] = (close.shift(-1) > close).astype(int)
-                  features_df = features_df.dropna()
-
-                  feature_cols = [col for col in features_df.columns if col != 'target']
-                  X = features_df[feature_cols]
-                  y = features_df['target']
-
-                  model = make_pipeline(
-                      StandardScaler(),
-                      MLPClassifier(
-                          hidden_layer_sizes=(128, 64, 32), 
-                          activation='relu', 
-                          solver='adam', 
-                          max_iter=1000, 
-                          random_state=42
-                      )
-                  )
-                  model.fit(X, y)
-                  joblib.dump(model, "model_pure.pkl")
-              except Exception as e:
-                  print("Error saat training otomatis:", e)
-
-          # --- 2. Ambil Harga Spot Live dari xaus.com ---
+          # --- 1. Ambil Harga Spot Live ---
           try:
               r = requests.get("https://xaus.com/api/v1/spot")
               data = r.json()
@@ -105,36 +64,10 @@ jobs:
               print("API xaus.com error:", e)
               spot_price = None
 
-          prediction, confidence = -1, 0
-          live_features = []
-
-          # --- 3. Ambil Data 1h Terakhir untuk Prediksi Live ---
-          df_live = get_long_df("60m", "60d")
-          if not df_live.empty and os.path.exists("model_pure.pkl"):
-              try:
-                  close_live = df_live['Close'].squeeze()
-                  
-                  for i in range(1, 49):
-                      pct = (close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i]
-                      live_features.append(pct)
-
-                  features = np.array([live_features])
-
-                  ml_model = joblib.load("model_pure.pkl")
-                  pred_class = ml_model.predict(features)[0]
-                  proba = ml_model.predict_proba(features)[0]
-                  conf_score = int(max(proba) * 100)
-
-                  prediction = int(pred_class)
-                  confidence = conf_score
-              except Exception as e:
-                  print("Error saat prediksi live:", e)
-
-          # --- 4. Evaluasi Log, Hitung Pips/Selisih, & Catat Log Baru ---
           now_utc = datetime.datetime.now(datetime.timezone.utc)
           current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
           current_date_str = now_utc.strftime("%Y-%m-%d")
-          
+
           log_file = "signal_log.json"
           logs = []
           if os.path.exists(log_file):
@@ -144,101 +77,152 @@ jobs:
               except:
                   logs = []
 
-          # Cek hasil prediksi sebelumnya & hitung selisih pips/poin harga
-          evaluation_text = "Siklus awal / Belum ada evaluasi sebelumnya."
-          if logs and spot_price is not None:
+          has_active_order = False
+          if logs:
+              last_log = logs[-1]
+              if last_log.get("status") == "OPEN":
+                  has_active_order = True
+
+          # --- 2. JIKA ADA ORDER AKTIF: TUTUP (CLOSE) DULU ---
+          if has_active_order and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
               last_price = last_log.get("spot_price")
               
               if last_price and last_pred is not None:
                   price_diff = spot_price - last_price
-                  # Untuk XAUUSD, selisih 1.0 setara dengan 10 pips (atau kita tampilkan langsung nilai selisih dolarnya)
                   diff_pips = round(price_diff * 10, 1)
-                  
                   actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
                   
-                  if last_pred == actual_direction:
-                      evaluation_text = f"✅ TEPAT | Harga bergerak {abs(round(price_diff, 2))} poin ({abs(diff_pips)} pips) searah."
-                      last_log["result"] = "WIN"
-                      last_log["diff_pips"] = abs(diff_pips)
-                  else:
-                      evaluation_text = f"❌ MELESET (Loss) | Meleset sejauh {abs(round(price_diff, 2))} poin ({abs(diff_pips)} pips) berlawanan arah."
-                      last_log["result"] = "LOSS"
-                      last_log["diff_pips"] = abs(diff_pips)
+                  is_win = (last_pred == actual_direction)
+                  last_log["status"] = "CLOSED"
+                  last_log["close_price"] = spot_price
+                  last_log["close_time"] = current_time_str
+                  last_log["result"] = "WIN" if is_win else "LOSS"
+                  last_log["diff_pips"] = abs(diff_pips)
 
-          # Simpan log baru
-          new_log = {
-              "time": current_time_str,
-              "date": current_date_str,
-              "spot_price": spot_price,
-              "prediction": prediction,
-              "confidence": confidence,
-              "result": None,
-              "diff_pips": 0
-          }
-          logs.append(new_log)
-          if len(logs) > 200:
-              logs = logs[-200:]
-          
-          with open(log_file, "w") as f:
-              json.dump(logs, f, indent=4)
+                  status_icon = "✅ WIN" if is_win else "❌ LOSS"
+                  arah_lama = "BUY" if last_pred == 1 else "SELL"
+                  
+                  # Kirim Pesan Close Order
+                  msg_close = (
+                      f"🔴 *[CLOSE ORDER]*\n"
+                      f"-----------------------------\n"
+                      f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
+                      f"💰 *Harga Close:* `${spot_price}`\n"
+                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                      f"📊 *Hasil Evaluasi:* {status_icon}\n"
+                      f"📏 *Jarak Poin/Pips:* `{abs(round(price_diff, 2))}` poin (`{abs(diff_pips)}` pips)"
+                  )
+                  send_telegram(msg_close)
+                  
+                  # Simpan perubahan status closed ke file log
+                  with open(log_file, "w") as f:
+                      json.dump(logs, f, indent=4)
+                      
+                  has_active_order = False # Posisi sekarang sudah kosong (bebas untuk jeda/pikir ulang)
 
-          # --- Hitung Performa Harian & Total Pips Akumulasi ---
-          today_wins = 0
-          today_losses = 0
-          total_pips_won = 0
-          total_pips_lost = 0
+          # --- 3. JIKA TIDAK ADA ORDER AKTIF: CEK APAKAH PERLU BUKA BARU ATAU JEDA ---
+          # Kita beri aturan jeda: Model hanya akan buka order baru jika tingkat keyakinannya (confidence) di atas 85%
+          # Jika di bawah itu, bot memilih "WAIT & SEE" (istirahat / tidak buka posisi baru)
           
-          for log in logs:
-              if log.get("date") == current_date_str:
-                  res = log.get("result")
-                  pips = log.get("diff_pips", 0)
-                  if res == "WIN":
-                      today_wins += 1
-                      total_pips_won += pips
-                  elif res == "LOSS":
-                      today_losses += 1
-                      total_pips_lost += pips
+          def get_long_df(interval, period):
+              df = yf.download("GC=F", period=period, interval=interval)
+              if isinstance(df.columns, pd.MultiIndex):
+                  df.columns = df.columns.get_level_values(0)
+              return df
+
+          df_macro = get_long_df("60m", "1y")
+          if not df_macro.empty:
+              try:
+                  close = df_macro['Close'].squeeze()
+                  features_df = pd.DataFrame(index=close.index)
+                  for i in range(1, 49):
+                      features_df[f'lag_{i}'] = close.pct_change(i)
+
+                  features_df['target'] = (close.shift(-1) > close).astype(int)
+                  features_df = features_df.dropna()
+
+                  X = features_df[[col for col in features_df.columns if col != 'target']]
+                  y = features_df['target']
+
+                  model = make_pipeline(
+                      StandardScaler(),
+                      MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=1000, random_state=42)
+                  )
+                  model.fit(X, y)
+                  joblib.dump(model, "model_pure.pkl")
+              except Exception as e:
+                  print("Error training:", e)
+
+          prediction, confidence = -1, 0
+          df_live = get_long_df("60m", "60d")
+          if not df_live.empty and os.path.exists("model_pure.pkl"):
+              try:
+                  close_live = df_live['Close'].squeeze()
+                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 49)]
+                  
+                  ml_model = joblib.load("model_pure.pkl")
+                  pred_class = ml_model.predict(np.array([live_features]))[0]
+                  proba = ml_model.predict_proba(np.array([live_features]))[0]
+                  
+                  prediction = int(pred_class)
+                  confidence = int(max(proba) * 100)
+              except Exception as e:
+                  print("Error prediksi:", e)
+
+          # --- 4. KEPUTUSAN FINAL: OPEN BARU ATAU ISTIRAHAT (WAIT & SEE) ---
+          # Jika tidak ada order aktif DAN confidence >= 85%, baru buka order baru.
+          # Jika confidence < 85%, bot memilih istirahat (tidak maksa buka order).
           
-          total_today = today_wins + today_losses
-          win_rate = int((today_wins / total_today * 100)) if total_today > 0 else 0
-          
-          if total_today > 0:
-              net_pips = total_pips_won - total_pips_lost
-              perf_text = f"📊 Win: {today_wins} | Loss: {today_losses} (Win Rate: {win_rate}%)\n⚖️ Net Pips Hari Ini: `{net_pips:+.1f}` pips"
+          if not has_active_order:
+              if confidence >= 85 and spot_price is not None:
+                  arah_teks = "📈 BUY / NAIK" if prediction == 1 else "📉 SELL / TURUN"
+                  ai_statement = "Pola konvergen kuat mengindikasikan momentum searah."
+
+                  new_log = {
+                      "status": "OPEN",
+                      "open_time": current_time_str,
+                      "date": current_date_str,
+                      "spot_price": spot_price,
+                      "prediction": prediction,
+                      "confidence": confidence,
+                      "close_price": None,
+                      "result": None,
+                      "diff_pips": 0
+                  }
+                  logs.append(new_log)
+                  if len(logs) > 200:
+                      logs = logs[-200:]
+
+                  with open(log_file, "w") as f:
+                      json.dump(logs, f, indent=4)
+
+                  today_wins = sum(1 for log in logs if log.get("date") == current_date_str and log.get("result") == "WIN")
+                  today_losses = sum(1 for log in logs if log.get("date") == current_date_str and log.get("result") == "LOSS")
+                  
+                  msg_open = (
+                      f"🟢 *[OPEN ORDER BARU]*\n"
+                      f"-----------------------------\n"
+                      f"⏱ *Waktu Entry:* `{current_time_str}` UTC\n"
+                      f"💰 *Harga Entry:* `${spot_price}`\n"
+                      f"🔮 *Posisi Baru:* *{arah_teks}*\n"
+                      f"🎯 *Keyakinan AI:* `{confidence}%`\n\n"
+                      f"💬 *Analisis:* _{ai_statement}_\n\n"
+                      f"📊 *Rekap Hari Ini:* Win {today_wins} | Loss {today_losses}"
+                  )
+                  send_telegram(msg_open)
+                  print("Order baru berhasil dibuka.")
+              else:
+                  print(f"Bot memilih istirahat (Wait & See). Confidence saat ini: {confidence}% (Di bawah ambang batas 85%).")
           else:
-              perf_text = "📊 Belum ada data selesai hari ini."
-
-          # --- 5. Statement AI Murni ---
-          if prediction == 1:
-              ai_statement = "Dari pembacaan pola riwayat jangka panjang, struktur harga mengindikasikan dorongan akumulasi naik."
-          elif prediction == 0:
-              ai_statement = "Dari pembacaan pola riwayat jangka panjang, struktur harga mengindikasikan tekanan distribusi turun."
-          else:
-              ai_statement = "Pola pergerakan sedang berada di area transisi yang belum jelas."
-
-          # --- 6. Kirim ke Telegram ---
-          arah_teks = "📈 BUY / NAIK" if prediction == 1 else ("📉 SELL / TURUN" if prediction == 0 else "FLAT/NETRAL")
-
-          msg = (
-              f"🤖 *XAUUSD Deep AI (Pure Price Action)*\n"
-              f"⏱ Waktu (UTC): `{current_time_str}`\n"
-              f"💰 Harga Spot: `${spot_price}`\n"
-              f"🔮 Prediksi: *{arah_teks}* (Conf: `{confidence}%`)\n\n"
-              f"💬 *Analisis Otak AI:*\n_{ai_statement}_\n\n"
-              f"📋 *Evaluasi Sebelumnya:*\n{evaluation_text}\n\n"
-              f"📈 *Performa Hari Ini:*\n{perf_text}"
-          )
-
-          send_telegram(msg)
-          print("Pesan dengan kalkulasi pips berhasil dikirim ke Telegram!")
+              print("Masih ada order aktif yang menunggu siklus berikutnya untuk ditutup.")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: Commit changes (Model & Log)
+      - name: Commit changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
@@ -246,5 +230,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Add precise pips/points calculation to evaluation log" || echo "No changes"
+          git commit -m "Add smart pause / wait-and-see filter for order opening" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
