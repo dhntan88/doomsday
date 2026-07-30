@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests pandas ta yfinance scikit-learn joblib
+          pip install requests pandas numpy scikit-learn joblib yfinance
 
       - name: Run Auto-Training & Telegram Signal Bot
         run: |
@@ -29,7 +29,6 @@ jobs:
           import os, json, datetime, requests
           import pandas as pd
           import numpy as np
-          import ta
           import yfinance as yf
           import joblib
           from sklearn.neural_network import MLPClassifier
@@ -55,11 +54,11 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai proses otomatis training Neural Network dan prediksi ML...")
+          print("Memulai proses otomatis training Neural Network (Pure Price Action)...")
 
-          # --- 1. Ambil Data Historis dari Yahoo Finance untuk Training ---
+          # --- 1. Ambil Data Historis dari Yahoo Finance ---
           def get_df(interval):
-              df = yf.download("GC=F", period="30d", interval=interval)
+              df = yf.download("GC=F", period="60d", interval=interval)
               if isinstance(df.columns, pd.MultiIndex):
                   df.columns = df.columns.get_level_values(0)
               return df
@@ -69,36 +68,31 @@ jobs:
           if not df1h.empty:
               try:
                   close = df1h['Close'].squeeze()
-                  high = df1h['High'].squeeze()
-                  low = df1h['Low'].squeeze()
-
-                  df1h['ema_fast'] = ta.trend.EMAIndicator(close, window=9).ema_indicator()
-                  df1h['ema_slow'] = ta.trend.EMAIndicator(close, window=21).ema_indicator()
-                  df1h['rsi'] = ta.momentum.RSIIndicator(close, window=14).rsi()
-                  df1h['atr'] = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
                   
-                  df1h['ema_diff'] = df1h['ema_fast'] - df1h['ema_slow']
-                  df1h['price_vs_ema'] = close - df1h['ema_fast']
+                  # Buat fitur murni dari perubahan harga beruntun (biar model mikir sendiri polanya)
+                  features_df = pd.DataFrame(index=close.index)
+                  for i in range(1, 6): # Ambil 5 candle ke belakang sebagai memori pola
+                      features_df[f'lag_{i}'] = close.pct_change(i)
 
-                  df1h['target'] = (close.shift(-1) > close).astype(int)
-                  df1h = df1h.dropna()
+                  features_df['target'] = (close.shift(-1) > close).astype(int)
+                  features_df = features_df.dropna()
 
-                  feature_cols = ['ema_diff', 'rsi', 'atr', 'price_vs_ema']
-                  X = df1h[feature_cols]
-                  y = df1h['target']
+                  feature_cols = [col for col in features_df.columns if col != 'target']
+                  X = features_df[feature_cols]
+                  y = features_df['target']
 
                   model = make_pipeline(
                       StandardScaler(),
                       MLPClassifier(
-                          hidden_layer_sizes=(32, 16), 
+                          hidden_layer_sizes=(64, 32), 
                           activation='relu', 
                           solver='adam', 
-                          max_iter=500, 
+                          max_iter=800, 
                           random_state=42
                       )
                   )
                   model.fit(X, y)
-                  joblib.dump(model, "model.pkl")
+                  joblib.dump(model, "model_pure.pkl")
               except Exception as e:
                   print("Error saat training otomatis:", e)
 
@@ -115,23 +109,19 @@ jobs:
 
           # --- 3. Ambil Data 15m Terakhir untuk Prediksi Live ---
           df15 = get_df("15m")
-          if not df15.empty and spot_price is not None and os.path.exists("model.pkl"):
+          if not df15.empty and os.path.exists("model_pure.pkl"):
               try:
                   close15 = df15['Close'].squeeze()
-                  high15  = df15['High'].squeeze()
-                  low15   = df15['Low'].squeeze()
+                  
+                  # Ekstrak fitur persentase perubahan harga terakhir yang sama persis saat training
+                  live_features = []
+                  for i in range(1, 6):
+                      pct = (close15.iloc[-1] - close15.iloc[-1-i]) / close15.iloc[-1-i]
+                      live_features.append(pct)
 
-                  ema_fast = ta.trend.EMAIndicator(close15, window=9).ema_indicator().iloc[-1]
-                  ema_slow = ta.trend.EMAIndicator(close15, window=21).ema_indicator().iloc[-1]
-                  rsi      = ta.momentum.RSIIndicator(close15, window=14).rsi().iloc[-1]
-                  atr      = ta.volatility.AverageTrueRange(high15, low15, close15, window=14).average_true_range().iloc[-1]
+                  features = np.array([live_features])
 
-                  ema_diff = float(ema_fast - ema_slow)
-                  price_vs_ema = float(spot_price - ema_fast)
-
-                  features = np.array([[ema_diff, float(rsi), float(atr), price_vs_ema]])
-
-                  ml_model = joblib.load("model.pkl")
+                  ml_model = joblib.load("model_pure.pkl")
                   pred_class = ml_model.predict(features)[0]
                   proba = ml_model.predict_proba(features)[0]
                   conf_score = int(max(proba) * 100)
@@ -144,31 +134,30 @@ jobs:
           # --- 4. Evaluasi & Kirim ke Telegram ---
           current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-          # Tentukan arah sinyal teks
           arah_teks = "📈 BUY / NAIK" if prediction == 1 else ("📉 SELL / TURUN" if prediction == 0 else "FLAT/NETRAL")
 
           msg = (
-              f"🤖 *XAUUSD Neural Network Signal*\n"
+              f"🤖 *XAUUSD Pure Neural Network*\n"
               f"⏱ Waktu (UTC): `{current_time_str}`\n"
               f"💰 Harga Spot: `${spot_price}`\n"
-              f"🔮 Prediksi: *{arah_teks}*\n"
+              f"🔮 Prediksi Model: *{arah_teks}*\n"
               f"📊 Confidence: `{confidence}%`"
           )
 
           send_telegram(msg)
-          print("Pesan sinyal berhasil dikirim ke Telegram!")
+          print("Pesan sinyal pure price action berhasil dikirim ke Telegram!")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: Commit changes (Simpan Model Saja)
+      - name: Commit changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git stash
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
-          git add model.pkl
-          git commit -m "Auto train and update model.pkl" || echo "No changes"
+          git add model_pure.pkl
+          git commit -m "Auto train pure neural network model" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
