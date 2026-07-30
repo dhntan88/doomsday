@@ -51,12 +51,24 @@
         "diff_pips": 0
     },
     {
-        "status": "OPEN",
+        "status": "CLOSED",
         "open_time": "2026-07-30 13:54:54",
         "date": "2026-07-30",
         "spot_price": 4101.299805,
         "prediction": 0,
         "confidence": 99,
+        "close_price": 4115.399902,
+        "result": "LOSS",
+        "diff_pips": 141.0,
+        "close_time": "2026-07-30 16:18:01"
+    },
+    {
+        "status": "OPEN",
+        "open_time": "2026-07-30 16:18:01",
+        "date": "2026-07-30",
+        "spot_price": 4115.399902,
+        "prediction": 0,
+        "confidence": 94,
         "close_price": null,
         "result": null,
         "diff_pips": 0
