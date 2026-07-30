@@ -158,6 +158,9 @@ jobs:
           send_telegram(msg)
           print("Pesan sinyal berhasil dikirim ke Telegram!")
           EOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Commit changes (Simpan Model Saja)
         run: |
