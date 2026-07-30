@@ -54,23 +54,26 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai proses otomatis training Neural Network (Pure Price Action + AI Statement + Daily Performance)...")
+          print("Memulai proses training Deep Neural Network (Extended History + Expanded Layers + Pure Price Action)...")
 
-          # --- 1. Ambil Data Historis dari Yahoo Finance ---
-          def get_df(interval):
-              df = yf.download("GC=F", period="60d", interval=interval)
+          # --- 1. Ambil Data Historis Jangka Panjang (1 Tahun untuk Melatih Memori Luas) ---
+          def get_long_df(interval, period):
+              df = yf.download("GC=F", period=period, interval=interval)
               if isinstance(df.columns, pd.MultiIndex):
                   df.columns = df.columns.get_level_values(0)
               return df
 
-          df1h = get_df("60m")
+          # Ambil data 1 jam selama 1 tahun ke belakang agar punya pandangan tren makro yang matang
+          df_macro = get_long_df("60m", "1y")
 
-          if not df1h.empty:
+          if not df_macro.empty:
               try:
-                  close = df1h['Close'].squeeze()
+                  close = df_macro['Close'].squeeze()
                   
                   features_df = pd.DataFrame(index=close.index)
-                  for i in range(1, 6):
+                  # Memperluas memori melihat ke belakang hingga 48 candle (2 hari penuh di chart 1h, atau rentang luas)
+                  lookback_window = 48
+                  for i in range(1, lookback_window + 1):
                       features_df[f'lag_{i}'] = close.pct_change(i)
 
                   features_df['target'] = (close.shift(-1) > close).astype(int)
@@ -80,13 +83,14 @@ jobs:
                   X = features_df[feature_cols]
                   y = features_df['target']
 
+                  # Arsitektur Hidden Layers diperbesar (128, 64, 32) untuk kapasitas mikir yang lebih kompleks
                   model = make_pipeline(
                       StandardScaler(),
                       MLPClassifier(
-                          hidden_layer_sizes=(64, 32), 
+                          hidden_layer_sizes=(128, 64, 32), 
                           activation='relu', 
                           solver='adam', 
-                          max_iter=800, 
+                          max_iter=1000, 
                           random_state=42
                       )
                   )
@@ -107,14 +111,14 @@ jobs:
           prediction, confidence = -1, 0
           live_features = []
 
-          # --- 3. Ambil Data 15m Terakhir untuk Prediksi Live ---
-          df15 = get_df("15m")
-          if not df15.empty and os.path.exists("model_pure.pkl"):
+          # --- 3. Ambil Data 1h Terakhir untuk Prediksi Live (Menyesuaikan dengan rentang lag 48) ---
+          df_live = get_long_df("60m", "60d")
+          if not df_live.empty and os.path.exists("model_pure.pkl"):
               try:
-                  close15 = df15['Close'].squeeze()
+                  close_live = df_live['Close'].squeeze()
                   
-                  for i in range(1, 6):
-                      pct = (close15.iloc[-1] - close15.iloc[-1-i]) / close15.iloc[-1-i]
+                  for i in range(1, 49):
+                      pct = (close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i]
                       live_features.append(pct)
 
                   features = np.array([live_features])
@@ -152,10 +156,10 @@ jobs:
               if last_price and last_pred is not None:
                   actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
                   if last_pred == actual_direction:
-                      evaluation_text = "✅ Prediksi 15 menit lalu TEPAT."
+                      evaluation_text = "✅ Prediksi sebelumnya TEPAT."
                       last_log["result"] = "WIN"
                   else:
-                      evaluation_text = "❌ Prediksi 15 menit lalu MELESET (Loss)."
+                      evaluation_text = "❌ Prediksi sebelumnya MELESET (Loss)."
                       last_log["result"] = "LOSS"
 
           # Simpan log baru
@@ -165,7 +169,7 @@ jobs:
               "spot_price": spot_price,
               "prediction": prediction,
               "confidence": confidence,
-              "result": None # Akan dievaluasi di siklus berikutnya
+              "result": None 
           }
           logs.append(new_log)
           if len(logs) > 200:
@@ -174,7 +178,7 @@ jobs:
           with open(log_file, "w") as f:
               json.dump(logs, f, indent=4)
 
-          # --- Hitung Performa Harian (Hari Ini) ---
+          # --- Hitung Performa Harian ---
           today_wins = 0
           today_losses = 0
           for log in logs:
@@ -189,35 +193,29 @@ jobs:
           win_rate = int((today_wins / total_today * 100)) if total_today > 0 else 0
           perf_text = f"📊 Win: {today_wins} | Loss: {today_losses} (Win Rate: {win_rate}%)" if total_today > 0 else "📊 Belum ada data selesai hari ini."
 
-          # --- 5. Buat Statement AI Otomatis ---
+          # --- 5. Statement AI Murni Berdasarkan Analisis Otak Model ---
           if prediction == 1:
-              if confidence >= 75:
-                  ai_statement = "Pasar menunjukkan momentum dorongan naik yang cukup kuat dari pola pergerakan terakhir. Saya sarankan fokus ke posisi *Buy* dengan tetap pasang pengaman."
-              else:
-                  ai_statement = "Ada sedikit indikasi pergerakan merangkak naik, tapi keyakinan model masih moderat. Perhatikan ketat batas risikonya."
+              ai_statement = "Dari pembacaan pola riwayat jangka panjang, struktur harga mengindikasikan dorongan akumulasi naik."
           elif prediction == 0:
-              if confidence >= 75:
-                  ai_statement = "Terdeteksi tekanan jual atau koreksi turun yang cukup dominan dari struktur harga terakhir. Waspada potensi kelanjutan penurunan."
-              else:
-                  ai_statement = "Struktur harga tampak melemah tipis, namun sinyal turunnya belum terlalu kuat. Tetap antisipasi adanya pembalikan arah mendadak."
+              ai_statement = "Dari pembacaan pola riwayat jangka panjang, struktur harga mengindikasikan tekanan distribusi turun."
           else:
-              ai_statement = "Pergerakan market sedang datar atau membingungkan. Model memilih untuk *Wait and See* dulu."
+              ai_statement = "Pola pergerakan sedang berada di area transisi yang belum jelas."
 
           # --- 6. Kirim ke Telegram ---
           arah_teks = "📈 BUY / NAIK" if prediction == 1 else ("📉 SELL / TURUN" if prediction == 0 else "FLAT/NETRAL")
 
           msg = (
-              f"🤖 *XAUUSD AI Signal & Analyst*\n"
+              f"🤖 *XAUUSD Deep AI (Pure Price Action)*\n"
               f"⏱ Waktu (UTC): `{current_time_str}`\n"
               f"💰 Harga Spot: `${spot_price}`\n"
               f"🔮 Prediksi: *{arah_teks}* (Conf: `{confidence}%`)\n\n"
-              f"💬 *Analisis Bot:*\n_{ai_statement}_\n\n"
+              f"💬 *Analisis Otak AI:*\n_{ai_statement}_\n\n"
               f"📋 *Evaluasi Sebelumnya:*\n{evaluation_text}\n\n"
               f"📈 *Performa Hari Ini:*\n{perf_text}"
           )
 
           send_telegram(msg)
-          print("Pesan sinyal, statement AI, dan performa harian berhasil dikirim ke Telegram!")
+          print("Pesan Deep Neural Network berhasil dikirim ke Telegram!")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -231,5 +229,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Auto train, update model and record daily performance log" || echo "No changes"
+          git commit -m "Upgrade to Deep Neural Network (1-year data, 48 lag, deep layers)" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
