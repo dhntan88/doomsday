@@ -21,6 +21,14 @@
         "spot_price": 4034.699951,
         "prediction": 0,
         "confidence": 56,
+        "result": "LOSS"
+    },
+    {
+        "time": "2026-07-30 09:26:22",
+        "date": "2026-07-30",
+        "spot_price": 4073.0,
+        "prediction": 0,
+        "confidence": 93,
         "result": null
     }
 ]
