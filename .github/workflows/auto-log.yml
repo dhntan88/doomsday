@@ -54,7 +54,7 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai proses otomatis training Neural Network (Pure Price Action)...")
+          print("Memulai proses otomatis training Neural Network (Pure Price Action + AI Statement + Daily Performance)...")
 
           # --- 1. Ambil Data Historis dari Yahoo Finance ---
           def get_df(interval):
@@ -69,9 +69,8 @@ jobs:
               try:
                   close = df1h['Close'].squeeze()
                   
-                  # Buat fitur murni dari perubahan harga beruntun (biar model mikir sendiri polanya)
                   features_df = pd.DataFrame(index=close.index)
-                  for i in range(1, 6): # Ambil 5 candle ke belakang sebagai memori pola
+                  for i in range(1, 6):
                       features_df[f'lag_{i}'] = close.pct_change(i)
 
                   features_df['target'] = (close.shift(-1) > close).astype(int)
@@ -106,6 +105,7 @@ jobs:
               spot_price = None
 
           prediction, confidence = -1, 0
+          live_features = []
 
           # --- 3. Ambil Data 15m Terakhir untuk Prediksi Live ---
           df15 = get_df("15m")
@@ -113,8 +113,6 @@ jobs:
               try:
                   close15 = df15['Close'].squeeze()
                   
-                  # Ekstrak fitur persentase perubahan harga terakhir yang sama persis saat training
-                  live_features = []
                   for i in range(1, 6):
                       pct = (close15.iloc[-1] - close15.iloc[-1-i]) / close15.iloc[-1-i]
                       live_features.append(pct)
@@ -131,33 +129,107 @@ jobs:
               except Exception as e:
                   print("Error saat prediksi live:", e)
 
-          # --- 4. Evaluasi & Kirim ke Telegram ---
-          current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+          # --- 4. Evaluasi Log, Hitung Performa, & Catat Log Baru ---
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
+          current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+          current_date_str = now_utc.strftime("%Y-%m-%d")
+          
+          log_file = "signal_log.json"
+          logs = []
+          if os.path.exists(log_file):
+              try:
+                  with open(log_file, "r") as f:
+                      logs = json.load(f)
+              except:
+                  logs = []
 
+          # Cek hasil prediksi sebelumnya
+          evaluation_text = "Siklus awal / Belum ada evaluasi sebelumnya."
+          if logs and spot_price is not None:
+              last_log = logs[-1]
+              last_pred = last_log.get("prediction")
+              last_price = last_log.get("spot_price")
+              if last_price and last_pred is not None:
+                  actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
+                  if last_pred == actual_direction:
+                      evaluation_text = "✅ Prediksi 15 menit lalu TEPAT."
+                      last_log["result"] = "WIN"
+                  else:
+                      evaluation_text = "❌ Prediksi 15 menit lalu MELESET (Loss)."
+                      last_log["result"] = "LOSS"
+
+          # Simpan log baru
+          new_log = {
+              "time": current_time_str,
+              "date": current_date_str,
+              "spot_price": spot_price,
+              "prediction": prediction,
+              "confidence": confidence,
+              "result": None # Akan dievaluasi di siklus berikutnya
+          }
+          logs.append(new_log)
+          if len(logs) > 200:
+              logs = logs[-200:]
+          
+          with open(log_file, "w") as f:
+              json.dump(logs, f, indent=4)
+
+          # --- Hitung Performa Harian (Hari Ini) ---
+          today_wins = 0
+          today_losses = 0
+          for log in logs:
+              if log.get("date") == current_date_str:
+                  res = log.get("result")
+                  if res == "WIN":
+                      today_wins += 1
+                  elif res == "LOSS":
+                      today_losses += 1
+          
+          total_today = today_wins + today_losses
+          win_rate = int((today_wins / total_today * 100)) if total_today > 0 else 0
+          perf_text = f"📊 Win: {today_wins} | Loss: {today_losses} (Win Rate: {win_rate}%)" if total_today > 0 else "📊 Belum ada data selesai hari ini."
+
+          # --- 5. Buat Statement AI Otomatis ---
+          if prediction == 1:
+              if confidence >= 75:
+                  ai_statement = "Pasar menunjukkan momentum dorongan naik yang cukup kuat dari pola pergerakan terakhir. Saya sarankan fokus ke posisi *Buy* dengan tetap pasang pengaman."
+              else:
+                  ai_statement = "Ada sedikit indikasi pergerakan merangkak naik, tapi keyakinan model masih moderat. Perhatikan ketat batas risikonya."
+          elif prediction == 0:
+              if confidence >= 75:
+                  ai_statement = "Terdeteksi tekanan jual atau koreksi turun yang cukup dominan dari struktur harga terakhir. Waspada potensi kelanjutan penurunan."
+              else:
+                  ai_statement = "Struktur harga tampak melemah tipis, namun sinyal turunnya belum terlalu kuat. Tetap antisipasi adanya pembalikan arah mendadak."
+          else:
+              ai_statement = "Pergerakan market sedang datar atau membingungkan. Model memilih untuk *Wait and See* dulu."
+
+          # --- 6. Kirim ke Telegram ---
           arah_teks = "📈 BUY / NAIK" if prediction == 1 else ("📉 SELL / TURUN" if prediction == 0 else "FLAT/NETRAL")
 
           msg = (
-              f"🤖 *XAUUSD Pure Neural Network*\n"
+              f"🤖 *XAUUSD AI Signal & Analyst*\n"
               f"⏱ Waktu (UTC): `{current_time_str}`\n"
               f"💰 Harga Spot: `${spot_price}`\n"
-              f"🔮 Prediksi Model: *{arah_teks}*\n"
-              f"📊 Confidence: `{confidence}%`"
+              f"🔮 Prediksi: *{arah_teks}* (Conf: `{confidence}%`)\n\n"
+              f"💬 *Analisis Bot:*\n_{ai_statement}_\n\n"
+              f"📋 *Evaluasi Sebelumnya:*\n{evaluation_text}\n\n"
+              f"📈 *Performa Hari Ini:*\n{perf_text}"
           )
 
           send_telegram(msg)
-          print("Pesan sinyal pure price action berhasil dikirim ke Telegram!")
+          print("Pesan sinyal, statement AI, dan performa harian berhasil dikirim ke Telegram!")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: Commit changes
+      - name: Commit changes (Model & Log)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git stash
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
-          git add model_pure.pkl
-          git commit -m "Auto train pure neural network model" || echo "No changes"
+          git add model_pure.pkl signal_log.json
+          git commit -m "Auto train, update model and record daily performance log" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
