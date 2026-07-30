@@ -29,6 +29,16 @@
         "spot_price": 4073.0,
         "prediction": 0,
         "confidence": 93,
-        "result": null
+        "result": "WIN",
+        "diff_pips": 57.0
+    },
+    {
+        "time": "2026-07-30 09:48:59",
+        "date": "2026-07-30",
+        "spot_price": 4067.300049,
+        "prediction": 0,
+        "confidence": 99,
+        "result": null,
+        "diff_pips": 0
     }
 ]
