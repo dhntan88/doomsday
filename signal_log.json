@@ -49,5 +49,16 @@
         "confidence": 98,
         "result": null,
         "diff_pips": 0
+    },
+    {
+        "status": "OPEN",
+        "open_time": "2026-07-30 13:54:54",
+        "date": "2026-07-30",
+        "spot_price": 4101.299805,
+        "prediction": 0,
+        "confidence": 99,
+        "close_price": null,
+        "result": null,
+        "diff_pips": 0
     }
 ]
