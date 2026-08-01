@@ -4,7 +4,8 @@ on:
   push:
     branches: [ "main" ]
   schedule:
-    - cron: '*/15 * * * *'    # tiap 15 menit UTC
+    # Diubah agar hanya berjalan Senin s/d Jumat (0 = Senin, 4 = Jumat, libur Sabtu & Minggu)
+    - cron: '*/15 * * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -35,6 +36,14 @@ jobs:
           from sklearn.preprocessing import StandardScaler
           from sklearn.pipeline import make_pipeline
 
+          # --- PENGAMAN WEEKEND (SABTU & MINGGU LIBUR) ---
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
+          current_weekday = now_utc.weekday() # 0=Senin, 5=Sabtu, 6=Minggu
+          
+          if current_weekday >= 5:
+              print("Hari ini Sabtu/Minggu (Market Tutup). Bot diliburkan.")
+              exit(0)
+
           TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
           TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -64,7 +73,6 @@ jobs:
               print("API xaus.com error:", e)
               spot_price = None
 
-          now_utc = datetime.datetime.now(datetime.timezone.utc)
           current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
           current_date_str = now_utc.strftime("%Y-%m-%d")
 
@@ -141,14 +149,10 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
-                  # AMBIL RIWAYAT ERROR (LOSS) DARI LOG UNTUK MEMBERIKAN BOBOT BELAJAR LEBIH
-                  # Jika ada riwayat Loss, kita berikan bobot sampel (sample_weight) yang lebih besar 
-                  # pada data yang mirip agar model lebih berhati-hati (Self-Correcting)
                   sample_weights = np.ones(len(X))
                   if logs:
                       for log in logs:
                           if log.get("result") == "LOSS":
-                              # Berikan penalti ekstra pada data training agar model fokus memperbaiki area error
                               sample_weights = sample_weights * 1.01 
 
                   model = make_pipeline(
@@ -156,7 +160,6 @@ jobs:
                       MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=1000, random_state=42)
                   )
                   
-                  # Fit dengan memasukkan bobot pembelajaran mandiri dari riwayat error
                   model.fit(X, y, mlpclassifier__sample_weight=sample_weights)
                   joblib.dump(model, "model_pure.pkl")
               except Exception as e:
@@ -234,5 +237,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Upgrade AI to self-correct using historical loss penalties" || echo "No changes"
+          git commit -m "Disable workflow cron on weekends and add weekend guard" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
