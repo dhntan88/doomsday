@@ -157,7 +157,7 @@
         "result": "WIN",
         "diff_pips": 32.0,
         "close_time": "2026-08-03 12:51:02",
-        "signed_pips": -32.0
+        "signed_pips": 32.0
     },
     {
         "status": "CLOSED",
