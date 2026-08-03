@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main" ]
   schedule:
-    # Diubah agar hanya berjalan Senin s/d Jumat (0 = Senin, 4 = Jumat, libur Sabtu & Minggu)
     - cron: '*/15 * * * 1-5'
   workflow_dispatch:
 
@@ -36,12 +35,13 @@ jobs:
           from sklearn.preprocessing import StandardScaler
           from sklearn.pipeline import make_pipeline
 
-          # --- PENGAMAN WEEKEND (SABTU & MINGGU LIBUR) ---
+          # --- PENGAMAN WEEKEND & JUMAT MALAM (HINDARI GAP) ---
           now_utc = datetime.datetime.now(datetime.timezone.utc)
-          current_weekday = now_utc.weekday() # 0=Senin, 5=Sabtu, 6=Minggu
-          
-          if current_weekday >= 5:
-              print("Hari ini Sabtu/Minggu (Market Tutup). Bot diliburkan.")
+          current_weekday = now_utc.weekday() # 0=Senin, 4=Jumat, 5=Sabtu, 6=Minggu
+          current_hour = now_utc.hour
+
+          if current_weekday >= 5 or (current_weekday == 4 and current_hour >= 20):
+              print("Market mendekati penutupan akhir pekan / sedang libur. Bot dihentikan sementara untuk menghindari gap.")
               exit(0)
 
           TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -75,6 +75,10 @@ jobs:
 
           current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
           current_date_str = now_utc.strftime("%Y-%m-%d")
+          current_year_month = now_utc.strftime("%Y-%m")
+          
+          # Hitung ISO Week untuk filter mingguan
+          current_year, current_week, _ = now_utc.isocalendar()
 
           log_file = "signal_log.json"
           logs = []
@@ -107,7 +111,10 @@ jobs:
                   last_log["close_price"] = spot_price
                   last_log["close_time"] = current_time_str
                   last_log["result"] = "WIN" if is_win else "LOSS"
+                  # Jika win, pips positif; jika loss, pips negatif untuk akumulasi
+                  signed_pips = diff_pips if (last_pred == 1 and spot_price > last_price) or (last_pred == 0 and spot_price < last_price) else -abs(diff_pips)
                   last_log["diff_pips"] = abs(diff_pips)
+                  last_log["signed_pips"] = signed_pips
 
                   status_icon = "✅ WIN" if is_win else "❌ LOSS"
                   arah_lama = "BUY" if last_pred == 1 else "SELL"
@@ -118,8 +125,8 @@ jobs:
                       f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
                       f"💰 *Harga Close:* `${spot_price}`\n"
                       f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
-                      f"📊 *Hasil:* {status_icon} (Membaca Error untuk Training)\n"
-                      f"📏 *Jarak:* `{abs(round(price_diff, 2))}` poin (`{abs(diff_pips)}` pips)"
+                      f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)\n"
+                      f"📏 *Jarak:* `{abs(round(price_diff, 2))}` poin"
                   )
                   send_telegram(msg_close)
                   
@@ -196,7 +203,8 @@ jobs:
                       "confidence": confidence,
                       "close_price": None,
                       "result": None,
-                      "diff_pips": 0
+                      "diff_pips": 0,
+                      "signed_pips": 0
                   }
                   logs.append(new_log)
                   if len(logs) > 200:
@@ -205,8 +213,42 @@ jobs:
                   with open(log_file, "w") as f:
                       json.dump(logs, f, indent=4)
 
-                  today_wins = sum(1 for log in logs if log.get("date") == current_date_str and log.get("result") == "WIN")
-                  today_losses = sum(1 for log in logs if log.get("date") == current_date_str and log.get("result") == "LOSS")
+                  # --- KALKULATOR STATISTIK (HARIAN, MINGGUAN, BULANAN) ---
+                  def calc_stats(filtered_logs):
+                      closed = [l for l in filtered_logs if l.get("status") == "CLOSED"]
+                      total = len(closed)
+                      if total == 0:
+                          return "0 Win / 0 Loss (WinRate: 0% | 0.0 Pips)"
+                      wins = sum(1 for l in closed if l.get("result") == "WIN")
+                      losses = sum(1 for l in closed if l.get("result") == "LOSS")
+                      winrate = round((wins / total) * 100, 1)
+                      total_pips = sum(l.get("signed_pips", 0) for l in closed)
+                      return f"{wins}W-{losses}L ({winrate}%) | {total_pips:+.1f} pips"
+
+                  # Filter Harian
+                  daily_logs = [l for l in logs if l.get("date") == current_date_str]
+                  
+                  # Filter Mingguan
+                  weekly_logs = []
+                  for l in logs:
+                      if "close_time" in l and l["close_time"]:
+                          try:
+                              dt = datetime.datetime.strptime(l["close_time"], "%Y-%m-%d %H:%M:%S")
+                              if dt.isocalendar()[0] == current_year and dt.isocalendar()[1] == current_week:
+                                  weekly_logs.append(l)
+                          except:
+                              pass
+
+                  # Filter Bulanan
+                  monthly_logs = []
+                  for l in logs:
+                      if "close_time" in l and l["close_time"]:
+                          if l["close_time"].startswith(current_year_month):
+                              monthly_logs.append(l)
+
+                  stat_harian = calc_stats(daily_logs)
+                  stat_mingguan = calc_stats(weekly_logs)
+                  stat_bulanan = calc_stats(monthly_logs)
                   
                   msg_open = (
                       f"🟢 *[OPEN ORDER BARU - SELF-CORRECTED]*\n"
@@ -216,10 +258,13 @@ jobs:
                       f"🔮 *Posisi Baru:* *{arah_teks}*\n"
                       f"🎯 *Keyakinan AI:* `{confidence}%`\n\n"
                       f"💬 *Analisis:* _{ai_statement}_\n\n"
-                      f"📊 *Rekap Hari Ini:* Win {today_wins} | Loss {today_losses}"
+                      f"📈 *Statistik Performa:*\n"
+                      f"• *Harian:* {stat_harian}\n"
+                      f"• *Mingguan:* {stat_mingguan}\n"
+                      f"• *Bulanan:* {stat_bulanan}"
                   )
                   send_telegram(msg_open)
-                  print("Order baru dibuka dengan model yang sudah mengadopsi koreksi error.")
+                  print("Order baru dibuka dengan statistik lengkap.")
               else:
                   print(f"Bot istirahat (Wait & See). Confidence: {confidence}% (Belum cukup kuat untuk koreksi).")
           else:
@@ -237,5 +282,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Disable workflow cron on weekends and add weekend guard" || echo "No changes"
+          git commit -m "Add daily, weekly, monthly winrate and pips tracking stats" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
