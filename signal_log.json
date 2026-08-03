@@ -173,15 +173,16 @@
         "close_time": "2026-08-03 13:01:14"
     },
     {
-        "status": "OPEN",
+        "status": "CLOSED",
         "open_time": "2026-08-03 13:01:14",
         "date": "2026-08-03",
         "spot_price": 4048.800049,
         "prediction": 0,
         "confidence": 99,
-        "close_price": null,
-        "result": null,
-        "diff_pips": 0,
-        "signed_pips": 0
+        "close_price": 4045.100098,
+        "result": "WIN",
+        "diff_pips": 37.0,
+        "signed_pips": 37.0,
+        "close_time": "2026-08-03 13:09:57"
     }
 ]
