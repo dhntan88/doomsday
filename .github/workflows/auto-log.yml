@@ -175,7 +175,7 @@ jobs:
                   if logs:
                       for log in logs:
                           if log.get("result") == "LOSS":
-                              sample_weights = sample_weights * 1.01 
+                              sample_weights = sample_weights * 1.03 
 
                   model = make_pipeline(
                       StandardScaler(),
