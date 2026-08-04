@@ -17,13 +17,14 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
+          pip install --upgrade pip
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
 
-      - name: Run Advanced Autonomous Trading Agent (Self-Correcting + Web Intel + Gemini AI)
+      - name: Run Advanced Autonomous Trading Agent (Optimized)
         run: |
           python - <<'EOF'
           import os, json, datetime, requests
@@ -36,18 +37,19 @@ jobs:
           from sklearn.pipeline import make_pipeline
           import google.generativeai as genai
 
-          # --- PENGAMAN WEEKEND & JUMAT MALAM (HINDARI GAP) ---
+          # --- 1. PENGAMAN WEEKEND & JUMAT MALAM (HINDARI GAP) ---
           now_utc = datetime.datetime.now(datetime.timezone.utc)
           current_weekday = now_utc.weekday()
           current_hour = now_utc.hour
 
+          # Tutup operasi jika akhir pekan atau jumat lewat jam 20:00 UTC
           if current_weekday >= 5 or (current_weekday == 4 and current_hour >= 20):
               print("Market mendekati penutupan akhir pekan / sedang libur. Bot dihentikan sementara.")
               exit(0)
 
           TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
           TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-          GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Opsional jika ingin pakai AI Gemini untuk narasi
+          GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
           def send_telegram(message):
               if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -64,27 +66,19 @@ jobs:
               except Exception as e:
                   print("Gagal kirim pesan ke Telegram:", e)
 
-          print("Memulai Autonomous Agent Siklus XAUUSD...")
+          print("Memulai Autonomous Agent Siklus XAUUSD (Optimized)...")
 
-          # --- 1. Ambil Harga Spot Live & Web Intelligence (Berita/Sentimen Sederhana) ---
+          # --- 2. AMBIL DATA HISTORIS & LIVE SPOT (YFINANCE GC=F) ---
           try:
-              r = requests.get("https://xaus.com/api/v1/spot")
-              data = r.json()
-              spot_price = float(data.get("spot_usd_oz"))
+              df_live = yf.download("GC=F", period="2d", interval="15m", progress=False)
+              if isinstance(df_live.columns, pd.MultiIndex):
+                  df_live.columns = df_live.columns.get_level_values(0)
+              spot_price = float(df_live['Close'].iloc[-1])
+              recent_change_pct = float(((df_live['Close'].iloc[-1] - df_live['Close'].iloc[-2]) / df_live['Close'].iloc[-2]) * 100)
           except Exception as e:
-              print("API xaus.com error:", e)
+              print("Gagal mengambil data yfinance:", e)
               spot_price = None
-
-          # Live Web Intelligence: Ambil tren data emas dari Yahoo Finance untuk dibaca narasi makromya
-          df_macro = yf.download("GC=F", period="5d", interval="60m")
-          if isinstance(df_macro.columns, pd.MultiIndex):
-              df_macro.columns = df_macro.columns.get_level_values(0)
-          
-          recent_change_pct = 0.0
-          if not df_macro.empty and len(df_macro) >= 2:
-              p_awal = df_macro['Close'].iloc[-2]
-              p_akhir = df_macro['Close'].iloc[-1]
-              recent_change_pct = float(((p_akhir - p_awal) / p_awal) * 100)
+              recent_change_pct = 0.0
 
           current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
           current_date_str = now_utc.strftime("%Y-%m-%d")
@@ -106,7 +100,7 @@ jobs:
               if last_log.get("status") == "OPEN":
                   has_active_order = True
 
-          # --- 2. JIKA ADA ORDER AKTIF: TUTUP (CLOSE) & EVALUASI ---
+          # --- 3. JIKA ADA ORDER AKTIF: TUTUP & EVALUASI ---
           if has_active_order and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
@@ -123,25 +117,22 @@ jobs:
                   last_log["close_time"] = current_time_str
                   last_log["result"] = "WIN" if is_win else "LOSS"
                   
-                  if is_win:
-                      signed_pips = abs(diff_pips)
-                  else:
-                      signed_pips = -abs(diff_pips)
+                  signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
                       
                   last_log["diff_pips"] = abs(diff_pips)
                   last_log["signed_pips"] = signed_pips
 
                   status_icon = "✅ WIN" if is_win else "❌ LOSS"
-                  arah_lama = "BUY" if last_pred == 1 else "SELL"
+                  arah_lama = "BUY" / "NAIK" if last_pred == 1 else "SELL / TURUN"
                   
                   msg_close = (
                       f"🔴 *[CLOSE ORDER - EVALUASI]*\n"
                       f"-----------------------------\n"
                       f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
-                      f"💰 *Harga Close:* `${spot_price}`\n"
-                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                      f"💰 *Harga Close:* `${spot_price:.2f}`\n"
+                      f"📌 *Order Asal:* {arah_lama} di `${last_price:.2f}`\n"
                       f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)\n"
-                      f"📏 *Jarak:* `{abs(round(price_diff, 2))}` poin"
+                      f"📏 *Perubahan:* `{abs(round(price_diff, 2))}` poin"
                   )
                   send_telegram(msg_close)
                   
@@ -150,20 +141,25 @@ jobs:
                       
                   has_active_order = False
 
-          # --- 3. TRAINING NEURAL NETWORK + PENALTI ERROR ---
+          # --- 4. TRAINING NEURAL NETWORK DENGAN FITUR LEBIH STABIL ---
           def get_long_df(interval, period):
-              df = yf.download("GC=F", period=period, interval=interval)
+              df = yf.download("GC=F", period=period, interval=interval, progress=False)
               if isinstance(df.columns, pd.MultiIndex):
                   df.columns = df.columns.get_level_values(0)
               return df
 
-          df_train = get_long_df("60m", "1y")
-          if not df_train.empty:
+          df_train = get_long_df("60m", "6mo")
+          if not df_train.empty and len(df_train) > 100:
               try:
                   close = df_train['Close'].squeeze()
                   features_df = pd.DataFrame(index=close.index)
-                  for i in range(1, 49):
+                  
+                  # Menggunakan rentang fitur persentase perubahan yang lebih compact
+                  for i in range(1, 13):
                       features_df[f'lag_{i}'] = close.pct_change(i)
+                  
+                  # Tambahkan indikator sederhana Moving Average Ratio untuk meredam noise
+                  features_df['ma_ratio'] = close / close.rolling(window=24).mean()
 
                   features_df['target'] = (close.shift(-1) > close).astype(int)
                   features_df = features_df.dropna()
@@ -171,15 +167,16 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
+                  # Penalti Loss dinamis berdasarkan riwayat sebelumnya
                   sample_weights = np.ones(len(X))
                   if logs:
                       for log in logs:
                           if log.get("result") == "LOSS":
-                              sample_weights = sample_weights * 1.03 
+                              sample_weights = sample_weights * 1.02
 
                   model = make_pipeline(
                       StandardScaler(),
-                      MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=1000, random_state=42)
+                      MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42, early_stopping=True)
                   )
                   model.fit(X, y, mlpclassifier__sample_weight=sample_weights)
                   joblib.dump(model, "model_pure.pkl")
@@ -190,7 +187,9 @@ jobs:
           if os.path.exists("model_pure.pkl") and not df_train.empty:
               try:
                   close_live = df_train['Close'].squeeze()
-                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 49)]
+                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 13)]
+                  ma_live_val = float(close_live.iloc[-1] / close_live.rolling(window=24).mean().iloc[-1])
+                  live_features.append(ma_live_val)
                   
                   ml_model = joblib.load("model_pure.pkl")
                   pred_class = ml_model.predict(np.array([live_features]))[0]
@@ -201,23 +200,23 @@ jobs:
               except Exception as e:
                   print("Error prediksi:", e)
 
-          # --- 4. KEPUTUSAN FINAL + WEB INTELLIGENCE + GEMINI AI NARATIVE + ADVISOR ---
+          # --- 5. KEPUTUSAN FINAL + GEMINI AI NARATIVE ---
           if not has_active_order:
-              if confidence >= 85 and spot_price is not None:
+              # Threshold dinaikkan ke 65% atau 70% agar tidak terlalu sering trigger posisi salah
+              if confidence >= 70 and spot_price is not None:
                   arah_teks = "📈 BUY / NAIK" if prediction == 1 else "📉 SELL / TURUN"
                   
-                  # Buat Analisis Naratif menggunakan Gemini AI (jika API key tersedia, atau fallback standar)
-                  ai_statement = f"Momentum 1 jam terakhir berubah {recent_change_pct:+.2f}%. Pola teknikal terdeteksi kuat."
+                  ai_statement = f"Momentum 1 jam terakhir berubah {recent_change_pct:+.2f}%. Model neural network mendeteksi peluang probabilitas."
                   if GEMINI_API_KEY:
                       try:
                           genai.configure(api_key=GEMINI_API_KEY)
-                          gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-                          prompt = f"Bertindaklah sebagai analis trading emas profesional. Harga spot XAUUSD saat ini ${spot_price}, perubahan terakhir {recent_change_pct:.2f}%. AI memprediksi arah {arah_teks} dengan keyakinan {confidence}%. Berikan 1 kalimat analisis pasar makro/teknikal yang tajam dan profesional dalam Bahasa Indonesia."
+                          gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                          prompt = f"Bertindaklah sebagai analis trading emas profesional. Harga spot XAUUSD ${spot_price:.2f}, perubahan {recent_change_pct:.2f}%. AI memprediksi arah {arah_teks} dengan keyakinan {confidence}%. Berikan 1 kalimat analisis pasar yang tajam dalam Bahasa Indonesia."
                           response = gemini_model.generate_content(prompt)
                           if response and response.text:
                               ai_statement = response.text.strip()
                       except Exception as e:
-                          print("Gemini API narrative error:", e)
+                          print("Gemini API error:", e)
 
                   new_log = {
                       "status": "OPEN",
@@ -238,7 +237,6 @@ jobs:
                   with open(log_file, "w") as f:
                       json.dump(logs, f, indent=4)
 
-                  # Kalkulator Statistik
                   def calc_stats(filtered_logs):
                       closed = [l for l in filtered_logs if l.get("status") == "CLOSED"]
                       total = len(closed)
@@ -267,23 +265,18 @@ jobs:
                   _, _, _, _, stat_harian = calc_stats(daily_logs)
                   _, _, _, _, stat_bulanan = calc_stats(monthly_logs)
 
-                  # Self-Improvement Advisor
-                  advisor_tip = "Sistem berjalan optimal. Konfigurasi stabil."
-                  total_closed_weekly = w_w + w_l
-                  if total_closed_weekly >= 3:
-                      if w_wr < 40:
-                          advisor_tip = "💡 *Saran AI:* Winrate di bawah 40%. Disarankan menaikkan *threshold* ke `90`."
-                      elif w_pips < 0:
-                          advisor_tip = "💡 *Saran AI:* Pips mingguan minus. Disarankan menaikkan penalti *loss* menjadi `1.03`."
+                  advisor_tip = "Sistem berjalan optimal."
+                  if (w_w + w_l) >= 3 and w_wr < 40:
+                      advisor_tip = "💡 *Saran AI:* Winrate di bawah 40%."
 
                   msg_open = (
                       f"🟢 *[OPEN ORDER - ADVANCED AGENT]*\n"
                       f"-----------------------------\n"
                       f"⏱ *Waktu Entry:* `{current_time_str}` UTC\n"
-                      f"💰 *Harga Entry:* `${spot_price}`\n"
+                      f"💰 *Harga Entry:* `${spot_price:.2f}`\n"
                       f"🔮 *Posisi Baru:* *{arah_teks}*\n"
                       f"🎯 *Keyakinan AI:* `{confidence}%`\n\n"
-                      f"🌐 *Analisis Makro & Web Intel:* _{ai_statement}_\n\n"
+                      f"🌐 *Analisis Makro:* _{ai_statement}_\n\n"
                       f"📈 *Statistik Performa:*\n"
                       f"• *Harian:* {stat_harian}\n"
                       f"• *Mingguan:* {stat_mingguan}\n"
@@ -291,7 +284,7 @@ jobs:
                       f"{advisor_tip}"
                   )
                   send_telegram(msg_open)
-                  print("Order baru berhasil dibuka dengan analisis Web Intel & Gemini AI.")
+                  print("Order baru berhasil dibuka.")
               else:
                   print(f"Bot istirahat (Wait & See). Confidence: {confidence}%")
           else:
@@ -306,9 +299,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git stash
           git pull origin main --rebase || echo "No rebase needed"
-          git stash pop || echo "No stash to pop"
           git add model_pure.pkl signal_log.json
-          git commit -m "Upgrade to Advanced Autonomous Agent with Web Intel and Gemini AI narrative" || echo "No changes"
+          git commit -m "Update Autonomous Agent model & signal logs [skip ci]" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
