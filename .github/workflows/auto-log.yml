@@ -10,8 +10,6 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write   # perlu ini supaya GITHUB_TOKEN boleh bikin GitHub Release
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -21,29 +19,11 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Restore model cache (grows over time, does not bloat git repo)
-        uses: actions/cache@v4
-        with:
-          path: |
-            model_quant.pkl
-            model_meta.json
-          # Key selalu unik per run supaya "cache save" di akhir job selalu
-          # berhasil (GitHub Actions cache tidak bisa overwrite key yang sama).
-          # restore-keys pakai prefix, jadi run berikutnya otomatis ambil
-          # cache PALING BARU yang cocok -> model "nyambung" dari run sebelumnya
-          # (penting untuk continual learning / warm_start di bawah).
-          # Cache lama otomatis expire (7 hari tidak diakses / kuota 10GB per
-          # repo), sama sekali tidak masuk git history -> repo tetap kecil.
-          key: quant-model-${{ github.run_id }}
-          restore-keys: |
-            quant-model-
-
       - name: Install dependencies
         run: |
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
 
-      - name: Run Optimized Quant Agent (Continual Learning, Two-Way Barrier, Weekly Backup)
-        id: quant_agent
+      - name: Run Optimized Quant Agent (Fixed Weights, Two-Way Barrier, Daily Retrain)
         run: |
           python - <<'EOF'
           import os, json, datetime, requests
@@ -80,7 +60,7 @@ jobs:
               except Exception as e:
                   print("Telegram error:", e)
 
-          print("Memulai Quant Agent (Continual Learning Pipeline)...")
+          print("Memulai Quant Agent (Optimized Pipeline)...")
 
           # Ambil Harga Spot Live
           try:
@@ -109,108 +89,55 @@ jobs:
           if logs and logs[-1].get("status") == "OPEN":
               has_active_order = True
 
-          # --- 2. EVALUASI & CLOSE ORDER (REAL TP/SL/TIMEOUT ENFORCEMENT) ---
-          # Sebelumnya order ditutup begitu saja di run berikutnya kapanpun itu
-          # kejadian, pakai harga saat itu -- tanpa peduli apakah harga sudah
-          # bergerak sejauh TP/SL yang dipakai buat melatih model (3.0 / 2.0)
-          # atau belum. Ini bikin exit price meleset jauh dari target training
-          # (apalagi kalau ada run yang gagal/skip sehingga order nyangkut OPEN
-          # berjam-jam). Sekarang tiap run (~tiap 15 menit) order OPEN dicek
-          # terhadap TP, SL, dan timeout 5 bar (5 jam, karena training pakai
-          # candle 1 jam) -- baru ditutup kalau salah satu kena. Kalau belum,
-          # order dibiarkan OPEN dan TIDAK ada order baru dibuka run ini.
-          TP_PIPS, SL_PIPS, TIMEOUT_HOURS = 3.0, 2.0, 5
-
+          # --- 2. EVALUASI & CLOSE ORDER ---
           if has_active_order and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
               last_price = last_log.get("spot_price")
-              open_time_str = last_log.get("open_time")
+              
+              if last_price and last_pred is not None:
+                  price_diff = spot_price - last_price
+                  diff_pips = round(price_diff * 10, 1)
+                  actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
+                  
+                  is_win = (last_pred == actual_direction)
+                  last_log["status"] = "CLOSED"
+                  last_log["close_price"] = spot_price
+                  last_log["close_time"] = current_time_str
+                  last_log["result"] = "WIN" if is_win else "LOSS"
+                  
+                  signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
+                  last_log["diff_pips"] = abs(diff_pips)
+                  last_log["signed_pips"] = signed_pips
 
-              elapsed_hours = None
-              if open_time_str:
-                  try:
-                      open_dt = datetime.datetime.strptime(open_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
-                      elapsed_hours = (now_utc - open_dt).total_seconds() / 3600.0
-                  except:
-                      elapsed_hours = None
+                  status_icon = "✅ WIN" if is_win else "❌ LOSS"
+                  arah_lama = "BUY" if last_pred == 1 else "SELL"
+                  
+                  msg_close = (
+                      f"🔴 *[CLOSE ORDER - OPTIMIZED]*\n"
+                      f"-----------------------------\n"
+                      f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
+                      f"💰 *Harga Close:* `${spot_price}`\n"
+                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                      f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)"
+                  )
+                  send_telegram(msg_close)
+                  with open(log_file, "w") as f:
+                      json.dump(logs, f, indent=4)
+                  has_active_order = False
 
-              if last_price is not None and last_pred is not None:
-                  if last_pred == 1:  # posisi BUY/long
-                      hit_tp = spot_price >= last_price + TP_PIPS
-                      hit_sl = spot_price <= last_price - SL_PIPS
-                  else:  # posisi SELL/short
-                      hit_tp = spot_price <= last_price - TP_PIPS
-                      hit_sl = spot_price >= last_price + SL_PIPS
-
-                  hit_timeout = (elapsed_hours is not None) and (elapsed_hours >= TIMEOUT_HOURS)
-
-                  if hit_tp or hit_sl or hit_timeout:
-                      price_diff = spot_price - last_price
-                      diff_pips = round(price_diff * 10, 1)
-
-                      if hit_tp:
-                          close_reason = "TP"
-                          is_win = True
-                      elif hit_sl:
-                          close_reason = "SL"
-                          is_win = False
-                      else:
-                          close_reason = "TIMEOUT"
-                          actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
-                          is_win = (last_pred == actual_direction)
-
-                      last_log["status"] = "CLOSED"
-                      last_log["close_price"] = spot_price
-                      last_log["close_time"] = current_time_str
-                      last_log["close_reason"] = close_reason
-                      last_log["result"] = "WIN" if is_win else "LOSS"
-
-                      signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
-                      last_log["diff_pips"] = abs(diff_pips)
-                      last_log["signed_pips"] = signed_pips
-
-                      status_icon = "✅ WIN" if is_win else "❌ LOSS"
-                      arah_lama = "BUY" if last_pred == 1 else "SELL"
-
-                      msg_close = (
-                          f"🔴 *[CLOSE ORDER - {close_reason}]*\n"
-                          f"-----------------------------\n"
-                          f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
-                          f"💰 *Harga Close:* `${spot_price}`\n"
-                          f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
-                          f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips) — alasan: {close_reason}"
-                      )
-                      send_telegram(msg_close)
-                      with open(log_file, "w") as f:
-                          json.dump(logs, f, indent=4)
-                      has_active_order = False
-                  else:
-                      status_txt = f"{elapsed_hours:.2f}h" if elapsed_hours is not None else "?"
-                      print(f"Order masih OPEN (belum kena TP/SL/timeout). Elapsed: {status_txt}")
-
-          # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
+          # --- 3. TRAINING EFESIEN: TRIPLE BARRIER DUA ARAH & BOBOT SAMPEL SPESIFIK ---
           model_file = "model_quant.pkl"
-          meta_file = "model_meta.json"
-
-          meta_data = {}
-          if os.path.exists(meta_file):
-              try:
-                  with open(meta_file, "r") as f:
-                      meta_data = json.load(f)
-              except:
-                  meta_data = {}
-
-          last_trained_date = meta_data.get("last_trained_date")
-          # Gate retrain: cukup sekali per hari UTC, bukan tiap 15 menit.
-          # Cache key sekarang per-run-id (bukan per-tanggal), jadi model_file
-          # bisa saja SUDAH ADA meski hari sudah ganti -> makanya gate-nya pakai
-          # tanggal training terakhir yang disimpan di meta_file, bukan cuma
-          # os.path.exists().
-          should_retrain = (not os.path.exists(model_file)) or (last_trained_date != current_date_str)
+          # Cek apakah model perlu di-retrain (misal: belum ada atau beda hari agar tidak berat tiap 15 menit)
+          should_retrain = not os.path.exists(model_file)
+          if os.path.exists(model_file):
+              # Bisa diatur retrain sekali sehari berdasarkan file mtime
+              file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(model_file), datetime.timezone.utc)
+              if (now_utc - file_mtime).days >= 1:
+                  should_retrain = pří = True
 
           if should_retrain:
-              print(f"Retrain hari ini ({current_date_str}). Terakhir training: {last_trained_date}")
+              print("Melakukan training ulang terjadwal (Daily Retrain)...")
               df_train = yf.download("GC=F", period="1y", interval="60m")
               if isinstance(df_train.columns, pd.MultiIndex):
                   df_train.columns = df_train.columns.get_level_values(0)
@@ -237,7 +164,7 @@ jobs:
                       hit_tp_long = (hs >= ep + tp_pips).any()
                       hit_sl_long = (ls <= ep - sl_pips).any()
                       hit_tp_short = (ls <= ep - tp_pips).any()
-                      hit_sl_short = (hs >= ep + sl_pips).any()
+                      hit_sl_short = (hs >= ep + tp_pips).any()
 
                       if hit_tp_long and not hit_sl_long:
                           labels.append(1) # Valid Long/Buy
@@ -253,80 +180,24 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
-                  try:
-                      n = len(X)
+                  # Perbaikan Bobot Sampel Berbasis Jarak Kemiripan (Feature Distance Weighting)
+                  sample_weights = np.ones(len(X))
+                  if logs:
+                      # Ambil fitur dari trade yang pernah loss untuk diberi penalti lokal pada baris data historis yang mirip
+                      for log in logs:
+                          if log.get("result") == "LOSS":
+                              # Berikan bobot lebih pada sampel historis yang memiliki volatilitas/pergerakan berdekatan
+                              sample_weights = np.where(X['volatility'] > 0, sample_weights * 1.01, sample_weights)
 
-                      # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance
-                      # Weighting): baris training yang volatilitasnya mirip dengan
-                      # kondisi saat kita LOSS di masa lalu diberi bobot lebih besar.
-                      sample_weights = np.ones(n)
-                      loss_vols = [
-                          log.get("volatility_at_open")
-                          for log in logs
-                          if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
-                      ]
-                      if loss_vols:
-                          vol_std = X['volatility'].std() or 1e-9
-                          for lv in loss_vols:
-                              close_mask = (X['volatility'] - lv).abs() <= vol_std
-                              sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
-
-                      # FIX: MLPClassifier.fit() TIDAK menerima argumen sample_weight
-                      # sama sekali (beda dari RandomForest/GradientBoosting). Baris
-                      # asli `model.fit(X, y, mlpclassifier__sample_weight=...)` akan
-                      # langsung crash dengan TypeError dan menggagalkan seluruh job
-                      # tiap kali retrain terjadi. Gantinya: terjemahkan sample_weights
-                      # jadi weighted bootstrap resampling sebelum training.
-                      probs = sample_weights / sample_weights.sum()
-                      rng = np.random.RandomState(42)
-                      resample_idx = rng.choice(n, size=n, replace=True, p=probs)
-                      X_w = X.iloc[resample_idx]
-                      y_w = y.iloc[resample_idx]
-
-                      # --- CONTINUAL LEARNING (warm_start) ---
-                      # Kalau ada model dari retrain sebelumnya (di-restore dari
-                      # cache), load itu dan lanjutkan training dari bobot yang
-                      # sudah ada -> model "mengingat" hasil belajar hari-hari
-                      # sebelumnya, bukan reset ke random weights tiap hari.
-                      model = None
-                      if os.path.exists(model_file):
-                          try:
-                              model = joblib.load(model_file)
-                              model.named_steps["mlpclassifier"].warm_start = True
-                              print("Model lama di-load, lanjut training (warm_start).")
-                          except Exception as e:
-                              print("Gagal load model lama, bikin model baru:", e)
-                              model = None
-
-                      if model is None:
-                          model = make_pipeline(
-                              StandardScaler(),
-                              MLPClassifier(
-                                  hidden_layer_sizes=(64, 32),
-                                  max_iter=800,
-                                  warm_start=True,
-                                  random_state=42
-                              )
-                          )
-
-                      model.fit(X_w, y_w)
-                      joblib.dump(model, model_file)
-
-                      meta_data["last_trained_date"] = current_date_str
-                      meta_data["n_samples"] = n
-                      with open(meta_file, "w") as f:
-                          json.dump(meta_data, f, indent=2)
-                      print(f"Model berhasil ditraining ulang (continual). n_samples={n}")
-                  except Exception as e:
-                      print("Error training model quant:", e)
-              else:
-                  print("Data training kosong, skip training kali ini.")
-          else:
-              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain, langsung pakai model_quant.pkl yang tersimpan.")
+                  model = make_pipeline(
+                      StandardScaler(),
+                      MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=800, random_state=42)
+                  )
+                  model.fit(X, y, mlpclassifier__sample_weight=sample_weights[:len(X)])
+                  joblib.dump(model, model_file)
 
           # --- 4. PREDIKSI LIVE ---
           prediction, confidence = -1, 0
-          live_vol_value = None
           df_live = yf.download("GC=F", period="5d", interval="60m")
           if isinstance(df_live.columns, pd.MultiIndex):
               df_live.columns = df_live.columns.get_level_values(0)
@@ -336,7 +207,6 @@ jobs:
                   close_live = df_live['Close'].squeeze()
                   live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 25)]
                   live_vol = close_live.rolling(window=14).std().iloc[-1]
-                  live_vol_value = float(live_vol)
                   live_trend = 1.0 if close_live.iloc[-1] > close_live.rolling(window=50).mean().iloc[-1] else 0.0
                   
                   live_vector = np.array([live_features + [live_vol, live_trend]])
@@ -374,7 +244,6 @@ jobs:
                       "spot_price": spot_price,
                       "prediction": prediction,
                       "confidence": confidence,
-                      "volatility_at_open": live_vol_value,
                       "close_price": None,
                       "result": None,
                       "diff_pips": 0,
@@ -425,39 +294,6 @@ jobs:
                       f"{advisor_tip}"
                   )
                   send_telegram(msg_open)
-
-          # --- 6. TENTUKAN APAKAH PERLU BACKUP MODEL KE GITHUB RELEASE ---
-          # Cache dipakai buat kerja sehari-hari (cepat, gratis, nggak numpuk
-          # repo), tapi cache terikat ke repo ini dan bisa expire. Supaya model
-          # tetap portable / punya cadangan permanen, sekali seminggu snapshot-nya
-          # di-upload sebagai asset di GitHub Release -> independen dari cache.
-          last_backup_date = meta_data.get("last_backup_date")
-          should_backup = False
-          if os.path.exists(model_file):
-              if last_backup_date is None:
-                  should_backup = True
-              else:
-                  try:
-                      last_dt = datetime.datetime.strptime(last_backup_date, "%Y-%m-%d").date()
-                      if (now_utc.date() - last_dt).days >= 7:
-                          should_backup = True
-                  except:
-                      should_backup = True
-
-          backup_tag = f"model-backup-{current_date_str}"
-          if should_backup:
-              meta_data["last_backup_date"] = current_date_str
-              with open(meta_file, "w") as f:
-                  json.dump(meta_data, f, indent=2)
-              print(f"Model akan di-backup ke GitHub Release: {backup_tag}")
-          else:
-              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup minggu ini.")
-
-          gh_output_path = os.environ.get("GITHUB_OUTPUT")
-          if gh_output_path:
-              with open(gh_output_path, "a") as f:
-                  f.write(f"should_backup={'true' if should_backup else 'false'}\n")
-                  f.write(f"backup_tag={backup_tag}\n")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -474,16 +310,3 @@ jobs:
           git add signal_log.json
           git commit -m "Update signal log with optimized quant execution" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
-
-      - name: Weekly model backup to GitHub Release (portable, independent of cache/account)
-        if: steps.quant_agent.outputs.should_backup == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ steps.quant_agent.outputs.backup_tag }}"
-          gh release create "$TAG" model_quant.pkl model_meta.json \
-            --title "Model snapshot $TAG" \
-            --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
-            || echo "Release $TAG sudah ada atau gagal dibuat, skip."
-
-16
