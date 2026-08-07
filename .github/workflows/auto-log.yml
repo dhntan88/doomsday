@@ -10,6 +10,8 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # perlu ini supaya GITHUB_TOKEN boleh bikin GitHub Release
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -19,17 +21,20 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Get current date (for cache key)
-        id: date
-        run: echo "today=$(date -u +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-
-      - name: Restore cached model (persists within the same UTC day)
+      - name: Restore model cache (grows over time, does not bloat git repo)
         uses: actions/cache@v4
         with:
-          path: model_quant.pkl
-          # Cache key changes once per day -> forces retrain once/day,
-          # but model survives across the ~96 runs within that day.
-          key: quant-model-${{ steps.date.outputs.today }}
+          path: |
+            model_quant.pkl
+            model_meta.json
+          # Key selalu unik per run supaya "cache save" di akhir job selalu
+          # berhasil (GitHub Actions cache tidak bisa overwrite key yang sama).
+          # restore-keys pakai prefix, jadi run berikutnya otomatis ambil
+          # cache PALING BARU yang cocok -> model "nyambung" dari run sebelumnya
+          # (penting untuk continual learning / warm_start di bawah).
+          # Cache lama otomatis expire (7 hari tidak diakses / kuota 10GB per
+          # repo), sama sekali tidak masuk git history -> repo tetap kecil.
+          key: quant-model-${{ github.run_id }}
           restore-keys: |
             quant-model-
 
@@ -37,7 +42,8 @@ jobs:
         run: |
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
 
-      - name: Run Optimized Quant Agent (Fixed Weights, Two-Way Barrier, Daily Retrain)
+      - name: Run Optimized Quant Agent (Continual Learning, Two-Way Barrier, Weekly Backup)
+        id: quant_agent
         run: |
           python - <<'EOF'
           import os, json, datetime, requests
@@ -74,7 +80,7 @@ jobs:
               except Exception as e:
                   print("Telegram error:", e)
 
-          print("Memulai Quant Agent (Optimized Pipeline)...")
+          print("Memulai Quant Agent (Continual Learning Pipeline)...")
 
           # Ambil Harga Spot Live
           try:
@@ -140,16 +146,28 @@ jobs:
                       json.dump(logs, f, indent=4)
                   has_active_order = False
 
-          # --- 3. TRAINING EFESIEN: TRIPLE BARRIER DUA ARAH & BOBOT SAMPEL SPESIFIK ---
+          # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
           model_file = "model_quant.pkl"
-          # Cek apakah model perlu di-retrain. Dengan actions/cache berkunci tanggal,
-          # file ini hanya akan ADA jika sudah pernah dibuat pada tanggal UTC yang sama.
-          # Kalau belum ada -> retrain. Kalau ada -> pakai yang sudah di-cache (tidak retrain
-          # tiap 15 menit lagi).
-          should_retrain = not os.path.exists(model_file)
+          meta_file = "model_meta.json"
+
+          meta_data = {}
+          if os.path.exists(meta_file):
+              try:
+                  with open(meta_file, "r") as f:
+                      meta_data = json.load(f)
+              except:
+                  meta_data = {}
+
+          last_trained_date = meta_data.get("last_trained_date")
+          # Gate retrain: cukup sekali per hari UTC, bukan tiap 15 menit.
+          # Cache key sekarang per-run-id (bukan per-tanggal), jadi model_file
+          # bisa saja SUDAH ADA meski hari sudah ganti -> makanya gate-nya pakai
+          # tanggal training terakhir yang disimpan di meta_file, bukan cuma
+          # os.path.exists().
+          should_retrain = (not os.path.exists(model_file)) or (last_trained_date != current_date_str)
 
           if should_retrain:
-              print("Melakukan training ulang terjadwal (Daily Retrain)...")
+              print(f"Retrain hari ini ({current_date_str}). Terakhir training: {last_trained_date}")
               df_train = yf.download("GC=F", period="1y", interval="60m")
               if isinstance(df_train.columns, pd.MultiIndex):
                   df_train.columns = df_train.columns.get_level_values(0)
@@ -176,9 +194,6 @@ jobs:
                       hit_tp_long = (hs >= ep + tp_pips).any()
                       hit_sl_long = (ls <= ep - sl_pips).any()
                       hit_tp_short = (ls <= ep - tp_pips).any()
-                      # FIX: SL untuk posisi short harus pakai sl_pips, bukan tp_pips.
-                      # Sebelumnya baris ini identik dgn hit_tp_long, sehingga bias
-                      # membuat label SELL (0) menang lebih sering saat training.
                       hit_sl_short = (hs >= ep + sl_pips).any()
 
                       if hit_tp_long and not hit_sl_long:
@@ -195,31 +210,76 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
-                  # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance Weighting)
-                  # Untuk tiap trade historis kita yang LOSS, beri bobot lebih besar pada
-                  # baris training yang volatilitasnya mirip (dalam 1 std dev) dengan
-                  # volatilitas saat loss itu terjadi -> model lebih hati-hati di kondisi
-                  # market yang mirip dengan kondisi saat kita rugi.
-                  sample_weights = np.ones(len(X))
-                  loss_vols = [
-                      log.get("volatility_at_open")
-                      for log in logs
-                      if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
-                  ]
-                  if loss_vols:
-                      vol_std = X['volatility'].std() or 1e-9
-                      for lv in loss_vols:
-                          close_mask = (X['volatility'] - lv).abs() <= vol_std
-                          sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
+                  try:
+                      n = len(X)
 
-                  model = make_pipeline(
-                      StandardScaler(),
-                      MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=800, random_state=42)
-                  )
-                  model.fit(X, y, mlpclassifier__sample_weight=sample_weights[:len(X)])
-                  joblib.dump(model, model_file)
+                      # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance
+                      # Weighting): baris training yang volatilitasnya mirip dengan
+                      # kondisi saat kita LOSS di masa lalu diberi bobot lebih besar.
+                      sample_weights = np.ones(n)
+                      loss_vols = [
+                          log.get("volatility_at_open")
+                          for log in logs
+                          if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
+                      ]
+                      if loss_vols:
+                          vol_std = X['volatility'].std() or 1e-9
+                          for lv in loss_vols:
+                              close_mask = (X['volatility'] - lv).abs() <= vol_std
+                              sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
+
+                      # FIX: MLPClassifier.fit() TIDAK menerima argumen sample_weight
+                      # sama sekali (beda dari RandomForest/GradientBoosting). Baris
+                      # asli `model.fit(X, y, mlpclassifier__sample_weight=...)` akan
+                      # langsung crash dengan TypeError dan menggagalkan seluruh job
+                      # tiap kali retrain terjadi. Gantinya: terjemahkan sample_weights
+                      # jadi weighted bootstrap resampling sebelum training.
+                      probs = sample_weights / sample_weights.sum()
+                      rng = np.random.RandomState(42)
+                      resample_idx = rng.choice(n, size=n, replace=True, p=probs)
+                      X_w = X.iloc[resample_idx]
+                      y_w = y.iloc[resample_idx]
+
+                      # --- CONTINUAL LEARNING (warm_start) ---
+                      # Kalau ada model dari retrain sebelumnya (di-restore dari
+                      # cache), load itu dan lanjutkan training dari bobot yang
+                      # sudah ada -> model "mengingat" hasil belajar hari-hari
+                      # sebelumnya, bukan reset ke random weights tiap hari.
+                      model = None
+                      if os.path.exists(model_file):
+                          try:
+                              model = joblib.load(model_file)
+                              model.named_steps["mlpclassifier"].warm_start = True
+                              print("Model lama di-load, lanjut training (warm_start).")
+                          except Exception as e:
+                              print("Gagal load model lama, bikin model baru:", e)
+                              model = None
+
+                      if model is None:
+                          model = make_pipeline(
+                              StandardScaler(),
+                              MLPClassifier(
+                                  hidden_layer_sizes=(64, 32),
+                                  max_iter=800,
+                                  warm_start=True,
+                                  random_state=42
+                              )
+                          )
+
+                      model.fit(X_w, y_w)
+                      joblib.dump(model, model_file)
+
+                      meta_data["last_trained_date"] = current_date_str
+                      meta_data["n_samples"] = n
+                      with open(meta_file, "w") as f:
+                          json.dump(meta_data, f, indent=2)
+                      print(f"Model berhasil ditraining ulang (continual). n_samples={n}")
+                  except Exception as e:
+                      print("Error training model quant:", e)
               else:
                   print("Data training kosong, skip training kali ini.")
+          else:
+              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain, langsung pakai model_quant.pkl yang tersimpan.")
 
           # --- 4. PREDIKSI LIVE ---
           prediction, confidence = -1, 0
@@ -322,6 +382,39 @@ jobs:
                       f"{advisor_tip}"
                   )
                   send_telegram(msg_open)
+
+          # --- 6. TENTUKAN APAKAH PERLU BACKUP MODEL KE GITHUB RELEASE ---
+          # Cache dipakai buat kerja sehari-hari (cepat, gratis, nggak numpuk
+          # repo), tapi cache terikat ke repo ini dan bisa expire. Supaya model
+          # tetap portable / punya cadangan permanen, sekali seminggu snapshot-nya
+          # di-upload sebagai asset di GitHub Release -> independen dari cache.
+          last_backup_date = meta_data.get("last_backup_date")
+          should_backup = False
+          if os.path.exists(model_file):
+              if last_backup_date is None:
+                  should_backup = True
+              else:
+                  try:
+                      last_dt = datetime.datetime.strptime(last_backup_date, "%Y-%m-%d").date()
+                      if (now_utc.date() - last_dt).days >= 7:
+                          should_backup = True
+                  except:
+                      should_backup = True
+
+          backup_tag = f"model-backup-{current_date_str}"
+          if should_backup:
+              meta_data["last_backup_date"] = current_date_str
+              with open(meta_file, "w") as f:
+                  json.dump(meta_data, f, indent=2)
+              print(f"Model akan di-backup ke GitHub Release: {backup_tag}")
+          else:
+              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup minggu ini.")
+
+          gh_output_path = os.environ.get("GITHUB_OUTPUT")
+          if gh_output_path:
+              with open(gh_output_path, "a") as f:
+                  f.write(f"should_backup={'true' if should_backup else 'false'}\n")
+                  f.write(f"backup_tag={backup_tag}\n")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -338,3 +431,14 @@ jobs:
           git add signal_log.json
           git commit -m "Update signal log with optimized quant execution" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
+
+      - name: Weekly model backup to GitHub Release (portable, independent of cache/account)
+        if: steps.quant_agent.outputs.should_backup == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.quant_agent.outputs.backup_tag }}"
+          gh release create "$TAG" model_quant.pkl model_meta.json \
+            --title "Model snapshot $TAG" \
+            --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
+            || echo "Release $TAG sudah ada atau gagal dibuat, skip."
