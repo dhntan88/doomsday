@@ -27,13 +27,6 @@ jobs:
           path: |
             model_quant.pkl
             model_meta.json
-          # Key selalu unik per run supaya "cache save" di akhir job selalu
-          # berhasil (GitHub Actions cache tidak bisa overwrite key yang sama).
-          # restore-keys pakai prefix, jadi run berikutnya otomatis ambil
-          # cache PALING BARU yang cocok -> model "nyambung" dari run sebelumnya
-          # (penting untuk continual learning / warm_start di bawah).
-          # Cache lama otomatis expire (7 hari tidak diakses / kuota 10GB per
-          # repo), sama sekali tidak masuk git history -> repo tetap kecil.
           key: quant-model-${{ github.run_id }}
           restore-keys: |
             quant-model-
@@ -80,7 +73,7 @@ jobs:
               except Exception as e:
                   print("Telegram error:", e)
 
-          print("Memulai Quant Agent (Continual Learning Pipeline)...")
+          print("Memulai Quant Agent dengan Integrasi Indikator Doomsday (EMA, RSI, ATR, Doom Bands)...")
 
           # Ambil Harga Spot Live
           try:
@@ -134,7 +127,7 @@ jobs:
                   arah_lama = "BUY" if last_pred == 1 else "SELL"
                   
                   msg_close = (
-                      f"🔴 *[CLOSE ORDER - OPTIMIZED]*\n"
+                      f"🔴 *[CLOSE ORDER - DOOMSDAY QUANT]*\n"
                       f"-----------------------------\n"
                       f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
                       f"💰 *Harga Close:* `${spot_price}`\n"
@@ -146,7 +139,7 @@ jobs:
                       json.dump(logs, f, indent=4)
                   has_active_order = False
 
-          # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
+          # --- 3. TRAINING: FITUR TAMBAHAN (EMA, RSI, ATR, DOOM BANDS) & CONTINUAL LEARNING ---
           model_file = "model_quant.pkl"
           meta_file = "model_meta.json"
 
@@ -159,11 +152,6 @@ jobs:
                   meta_data = {}
 
           last_trained_date = meta_data.get("last_trained_date")
-          # Gate retrain: cukup sekali per hari UTC, bukan tiap 15 menit.
-          # Cache key sekarang per-run-id (bukan per-tanggal), jadi model_file
-          # bisa saja SUDAH ADA meski hari sudah ganti -> makanya gate-nya pakai
-          # tanggal training terakhir yang disimpan di meta_file, bukan cuma
-          # os.path.exists().
           should_retrain = (not os.path.exists(model_file)) or (last_trained_date != current_date_str)
 
           if should_retrain:
@@ -177,11 +165,45 @@ jobs:
                   high = df_train['High'].squeeze()
                   low = df_train['Low'].squeeze()
 
+                  # Perhitungan Indikator Teknis (Sesuai script Pine Script Doomsday)
+                  ema_fast = close.ewm(span=9, adjust=False).mean()
+                  ema_slow = close.ewm(span=21, adjust=False).mean()
+                  
+                  # Kalkulasi RSI 14 manual dengan pandas
+                  delta = close.diff()
+                  gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                  loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                  rs = gain / (loss + 1e-9)
+                  rsi_series = 100 - (100 / (1 + rs))
+
+                  # Kalkulasi ATR 14 manual
+                  tr1 = high - low
+                  tr2 = (high - close.shift()).abs()
+                  tr3 = (low - close.shift()).abs()
+                  tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                  atr_series = tr.rolling(window=14).mean()
+
+                  upper_doom = ema_fast + (atr_series * 2)
+                  lower_doom = ema_fast - (atr_series * 2)
+
+                  # Konstruksi DataFrame Fitur
                   features_df = pd.DataFrame(index=close.index)
-                  for i in range(1, 25):
+                  for i in range(1, 13):
                       features_df[f'lag_{i}'] = close.pct_change(i)
+                  
                   features_df['volatility'] = close.rolling(window=14).std()
-                  features_df['sma_trend'] = (close > close.rolling(window=50).mean()).astype(int)
+                  features_df['ema_fast'] = ema_fast
+                  features_df['ema_slow'] = ema_slow
+                  features_df['rsi'] = rsi_series
+                  features_df['atr'] = atr_series
+                  features_df['upper_doom'] = upper_doom
+                  features_df['lower_doom'] = lower_doom
+                  
+                  # Kondisi Sinyal Tambahan dari Pine Script
+                  features_df['buy_signal'] = ((ema_fast > ema_slow) & (rsi_series > 55) & (close > ema_fast)).astype(int)
+                  features_df['sell_signal'] = ((ema_fast < ema_slow) & (rsi_series < 45) & (close < ema_fast)).astype(int)
+                  features_df['doom_buy'] = (close < lower_doom).astype(int)
+                  features_df['doom_sell'] = (close > upper_doom).astype(int)
 
                   # Triple Barrier Dua Arah (1 = Long Win, 0 = Short Win)
                   tp_pips, sl_pips, timeout = 3.0, 2.0, 5
@@ -197,11 +219,11 @@ jobs:
                       hit_sl_short = (hs >= ep + sl_pips).any()
 
                       if hit_tp_long and not hit_sl_long:
-                          labels.append(1) # Valid Long/Buy
+                          labels.append(1)
                       elif hit_tp_short and not hit_sl_short:
-                          labels.append(0) # Valid Short/Sell
+                          labels.append(0)
                       else:
-                          labels.append(-2) # Netral/Timeout
+                          labels.append(-2)
 
                   features_df['target'] = pd.Series(labels, index=features_df.index[:len(labels)])
                   features_df = features_df.dropna()
@@ -212,10 +234,6 @@ jobs:
 
                   try:
                       n = len(X)
-
-                      # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance
-                      # Weighting): baris training yang volatilitasnya mirip dengan
-                      # kondisi saat kita LOSS di masa lalu diberi bobot lebih besar.
                       sample_weights = np.ones(n)
                       loss_vols = [
                           log.get("volatility_at_open")
@@ -228,23 +246,12 @@ jobs:
                               close_mask = (X['volatility'] - lv).abs() <= vol_std
                               sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
 
-                      # FIX: MLPClassifier.fit() TIDAK menerima argumen sample_weight
-                      # sama sekali (beda dari RandomForest/GradientBoosting). Baris
-                      # asli `model.fit(X, y, mlpclassifier__sample_weight=...)` akan
-                      # langsung crash dengan TypeError dan menggagalkan seluruh job
-                      # tiap kali retrain terjadi. Gantinya: terjemahkan sample_weights
-                      # jadi weighted bootstrap resampling sebelum training.
                       probs = sample_weights / sample_weights.sum()
                       rng = np.random.RandomState(42)
                       resample_idx = rng.choice(n, size=n, replace=True, p=probs)
                       X_w = X.iloc[resample_idx]
                       y_w = y.iloc[resample_idx]
 
-                      # --- CONTINUAL LEARNING (warm_start) ---
-                      # Kalau ada model dari retrain sebelumnya (di-restore dari
-                      # cache), load itu dan lanjutkan training dari bobot yang
-                      # sudah ada -> model "mengingat" hasil belajar hari-hari
-                      # sebelumnya, bukan reset ke random weights tiap hari.
                       model = None
                       if os.path.exists(model_file):
                           try:
@@ -273,15 +280,15 @@ jobs:
                       meta_data["n_samples"] = n
                       with open(meta_file, "w") as f:
                           json.dump(meta_data, f, indent=2)
-                      print(f"Model berhasil ditraining ulang (continual). n_samples={n}")
+                      print(f"Model berhasil ditraining ulang dengan indikator Doomsday. n_samples={n}")
                   except Exception as e:
                       print("Error training model quant:", e)
               else:
                   print("Data training kosong, skip training kali ini.")
           else:
-              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain, langsung pakai model_quant.pkl yang tersimpan.")
+              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain.")
 
-          # --- 4. PREDIKSI LIVE ---
+          # --- 4. PREDIKSI LIVE MENGGUNAKAN INDIKATOR TERBARU ---
           prediction, confidence = -1, 0
           live_vol_value = None
           df_live = yf.download("GC=F", period="5d", interval="60m")
@@ -291,12 +298,46 @@ jobs:
           if os.path.exists(model_file) and not df_live.empty:
               try:
                   close_live = df_live['Close'].squeeze()
-                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 25)]
+                  high_live = df_live['High'].squeeze()
+                  low_live = df_live['Low'].squeeze()
+
+                  # Perhitungan indikator live persis seperti training
+                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 13)]
                   live_vol = close_live.rolling(window=14).std().iloc[-1]
                   live_vol_value = float(live_vol)
-                  live_trend = 1.0 if close_live.iloc[-1] > close_live.rolling(window=50).mean().iloc[-1] else 0.0
                   
-                  live_vector = np.array([live_features + [live_vol, live_trend]])
+                  ema_fast_live = close_live.ewm(span=9, adjust=False).mean().iloc[-1]
+                  ema_slow_live = close_live.ewm(span=21, adjust=False).mean().iloc[-1]
+                  
+                  delta_live = close_live.diff()
+                  gain_l = (delta_live.where(delta_live > 0, 0)).rolling(window=14).mean().iloc[-1]
+                  loss_l = (-delta_live.where(delta_live < 0, 0)).rolling(window=14).mean().iloc[-1]
+                  rs_l = gain_l / (loss_l + 1e-9)
+                  rsi_live = 100 - (100 / (1 + rs_l))
+
+                  tr1_l = high_live - low_live
+                  tr2_l = (high_live - close_live.shift()).abs()
+                  tr3_l = (low_live - close_live.shift()).abs()
+                  tr_l = pd.concat([tr1_l, tr2_l, tr3_l], axis=1).max(axis=1)
+                  atr_live = tr_l.rolling(window=14).mean().iloc[-1]
+
+                  upper_doom_live = ema_fast_live + (atr_live * 2)
+                  lower_doom_live = ema_fast_live - (atr_live * 2)
+                  current_close_val = close_live.iloc[-1]
+
+                  buy_sig_live = 1 if (ema_fast_live > ema_slow_live and rsi_live > 55 and current_close_val > ema_fast_live) else 0
+                  sell_sig_live = 1 if (ema_fast_live < ema_slow_live and rsi_live < 45 and current_close_val < ema_fast_live) else 0
+                  doom_buy_live = 1 if current_close_val < lower_doom_live else 0
+                  doom_sell_live = 1 if current_close_val > upper_doom_live else 0
+
+                  # Gabungkan seluruh fitur agar sesuai dengan dimensi model
+                  complete_live_vector = live_features + [
+                      live_vol, ema_fast_live, ema_slow_live, rsi_live, atr_live,
+                      upper_doom_live, lower_doom_live, buy_sig_live, sell_sig_live,
+                      doom_buy_live, doom_sell_live
+                  ]
+
+                  live_vector = np.array([complete_live_vector])
                   ml_model = joblib.load(model_file)
                   
                   pred_class = ml_model.predict(live_vector)[0]
@@ -311,13 +352,13 @@ jobs:
           if not has_active_order:
               if confidence >= 85 and spot_price is not None:
                   arah_teks = "📈 BUY / NAIK" if prediction == 1 else "📉 SELL / TURUN"
-                  ai_statement = "Setup tervalidasi oleh Triple Barrier dua arah."
+                  ai_statement = "Setup tervalidasi oleh indikator Doomsday & Triple Barrier."
                   
                   if GEMINI_API_KEY:
                       try:
                           genai.configure(api_key=GEMINI_API_KEY)
                           gem_model = genai.GenerativeModel('gemini-2.5-flash')
-                          prompt = f"Analis quant emas: Spot ${spot_price}, prediksi {arah_teks}, confidence {confidence}%. Berikan 1 kalimat analisis risiko."
+                          prompt = f"Analis quant emas Doomsday: Spot ${spot_price}, prediksi {arah_teks}, confidence {confidence}%. Berikan 1 kalimat analisis risiko."
                           resp = gem_model.generate_content(prompt)
                           if resp and resp.text:
                               ai_statement = resp.text.strip()
@@ -363,12 +404,12 @@ jobs:
                   _, _, _, _, stat_harian = calc_stats(daily_logs)
                   _, _, _, _, stat_bulanan = calc_stats(monthly_logs)
 
-                  advisor_tip = "Sistem berjalan optimal dengan arsitektur Quant murni."
+                  advisor_tip = "Sistem Doomsday berjalan optimal dengan arsitektur Quant murni."
                   if (w_w + w_l) >= 3 and w_wr < 40:
                       advisor_tip = "💡 *Saran AI:* Winrate mingguan di bawah 40%. Naikkan threshold confidence ke `90`."
 
                   msg_open = (
-                      f"🟢 *[OPEN ORDER - QUANT OPTIMIZED]*\n"
+                      f"🟢 *[OPEN ORDER - DOOMSDAY QUANT]*\n"
                       f"-----------------------------\n"
                       f"⏱ *Waktu Entry:* `{current_time_str}` UTC\n"
                       f"💰 *Harga Entry:* `${spot_price}`\n"
@@ -383,11 +424,7 @@ jobs:
                   )
                   send_telegram(msg_open)
 
-          # --- 6. TENTUKAN APAKAH PERLU BACKUP MODEL KE GITHUB RELEASE ---
-          # Cache dipakai buat kerja sehari-hari (cepat, gratis, nggak numpuk
-          # repo), tapi cache terikat ke repo ini dan bisa expire. Supaya model
-          # tetap portable / punya cadangan permanen, sekali seminggu snapshot-nya
-          # di-upload sebagai asset di GitHub Release -> independen dari cache.
+          # --- 6. BACKUP MODEL KE GITHUB RELEASE ---
           last_backup_date = meta_data.get("last_backup_date")
           should_backup = False
           if os.path.exists(model_file):
@@ -408,7 +445,7 @@ jobs:
                   json.dump(meta_data, f, indent=2)
               print(f"Model akan di-backup ke GitHub Release: {backup_tag}")
           else:
-              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup minggu ini.")
+              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup.")
 
           gh_output_path = os.environ.get("GITHUB_OUTPUT")
           if gh_output_path:
@@ -421,7 +458,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Commit changes (Hanya Log, Model tidak di-commit agar repo tidak bengkak)
+      - name: Commit changes (Hanya Log)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
@@ -429,10 +466,10 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add signal_log.json
-          git commit -m "Update signal log with optimized quant execution" || echo "No changes"
+          git commit -m "Update signal log with Doomsday Quant integration" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
 
-      - name: Weekly model backup to GitHub Release (portable, independent of cache/account)
+      - name: Weekly model backup to GitHub Release
         if: steps.quant_agent.outputs.should_backup == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -440,5 +477,5 @@ jobs:
           TAG="${{ steps.quant_agent.outputs.backup_tag }}"
           gh release create "$TAG" model_quant.pkl model_meta.json \
             --title "Model snapshot $TAG" \
-            --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
+            --notes "Weekly automated snapshot of Doomsday model_quant.pkl for portability." \
             || echo "Release $TAG sudah ada atau gagal dibuat, skip."
