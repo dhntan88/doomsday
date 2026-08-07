@@ -1,12 +1,26 @@
 [
     {
-        "status": "OPEN",
+        "status": "CLOSED",
         "open_time": "2026-08-07 14:16:28",
         "date": "2026-08-07",
         "spot_price": 4332.5,
         "prediction": 0,
         "confidence": 99,
         "volatility_at_open": 35.17421979119508,
+        "close_price": 4349.899902,
+        "result": "LOSS",
+        "diff_pips": 174.0,
+        "signed_pips": -174.0,
+        "close_time": "2026-08-07 15:33:16"
+    },
+    {
+        "status": "OPEN",
+        "open_time": "2026-08-07 15:33:16",
+        "date": "2026-08-07",
+        "spot_price": 4349.899902,
+        "prediction": 0,
+        "confidence": 99,
+        "volatility_at_open": 36.264411204109905,
         "close_price": null,
         "result": null,
         "diff_pips": 0,
