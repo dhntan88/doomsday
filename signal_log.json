@@ -64,5 +64,18 @@
         "diff_pips": 299.0,
         "signed_pips": -299.0,
         "close_time": "2026-08-07 06:02:02"
+    },
+    {
+        "status": "OPEN",
+        "open_time": "2026-08-07 09:41:40",
+        "date": "2026-08-07",
+        "spot_price": 4311.799805,
+        "prediction": 0,
+        "confidence": 99,
+        "volatility_at_open": 25.149176741474477,
+        "close_price": null,
+        "result": null,
+        "diff_pips": 0,
+        "signed_pips": 0
     }
 ]
