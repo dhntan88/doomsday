@@ -1,1 +1,15 @@
-[]
+[
+    {
+        "status": "OPEN",
+        "open_time": "2026-08-07 14:16:28",
+        "date": "2026-08-07",
+        "spot_price": 4332.5,
+        "prediction": 0,
+        "confidence": 99,
+        "volatility_at_open": 35.17421979119508,
+        "close_price": null,
+        "result": null,
+        "diff_pips": 0,
+        "signed_pips": 0
+    }
+]
