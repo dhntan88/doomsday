@@ -10,6 +10,8 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # perlu ini supaya GITHUB_TOKEN boleh bikin GitHub Release
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -19,11 +21,22 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Restore model cache (grows over time, does not bloat git repo)
+        uses: actions/cache@v4
+        with:
+          path: |
+            model_quant.pkl
+            model_meta.json
+          key: quant-model-${{ github.run_id }}
+          restore-keys: |
+            quant-model-
+
       - name: Install dependencies
         run: |
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
 
-      - name: Run Optimized Quant Agent (Fixed Weights, Two-Way Barrier, Daily Retrain)
+      - name: Run Optimized Quant Agent (Continual Learning, Two-Way Barrier, Weekly Backup)
+        id: quant_agent
         run: |
           python - <<'EOF'
           import os, json, datetime, requests
@@ -35,6 +48,16 @@ jobs:
           from sklearn.preprocessing import StandardScaler
           from sklearn.pipeline import make_pipeline
           import google.generativeai as genai
+
+          # --- 0. BARRIER KONSTAN (dipakai SAMA PERSIS di training & live eval) ---
+          # Sebelumnya training pakai tp_pips=3.0 / sl_pips=2.0 / timeout=5 bar,
+          # tapi evaluasi live cuma bandingin harga "kapanpun run berikutnya
+          # kebetulan jalan" -> bisa 15 menit, bisa 3+ jam kemudian, tanpa cek
+          # apakah TP/SL beneran kesentuh. Itu bikin live P/L nggak nyambung
+          # sama apa yg dipelajari model. Sekarang disatukan di sini.
+          TP_PIPS = 3.0
+          SL_PIPS = 2.0
+          TIMEOUT_HOURS = 5
 
           # --- 1. PENGAMAN WAKTU & JUMAT CUTOFF (Disesuaikan ke 21:30 UTC) ---
           now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -60,7 +83,7 @@ jobs:
               except Exception as e:
                   print("Telegram error:", e)
 
-          print("Memulai Quant Agent (Optimized Pipeline)...")
+          print("Memulai Quant Agent (Continual Learning Pipeline)...")
 
           # Ambil Harga Spot Live
           try:
@@ -89,59 +112,88 @@ jobs:
           if logs and logs[-1].get("status") == "OPEN":
               has_active_order = True
 
-          # --- 2. EVALUASI & CLOSE ORDER ---
+          # --- 2. EVALUASI & CLOSE ORDER (TP/SL/timeout, bukan "harga next-run") ---
           if has_active_order and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
               last_price = last_log.get("spot_price")
-              
-              if last_price and last_pred is not None:
+              open_time_str = last_log.get("open_time")
+
+              if last_price is not None and last_pred is not None and open_time_str:
+                  open_dt = datetime.datetime.strptime(open_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                  elapsed_hours = (now_utc - open_dt).total_seconds() / 3600.0
+
                   price_diff = spot_price - last_price
-                  diff_pips = round(price_diff * 10, 1)
-                  actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
-                  
-                  is_win = (last_pred == actual_direction)
-                  last_log["status"] = "CLOSED"
-                  last_log["close_price"] = spot_price
-                  last_log["close_time"] = current_time_str
-                  last_log["result"] = "WIN" if is_win else "LOSS"
-                  
-                  signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
-                  last_log["diff_pips"] = abs(diff_pips)
-                  last_log["signed_pips"] = signed_pips
+                  if last_pred == 1:  # BUY: untung kalau harga naik
+                      hit_tp = price_diff >= TP_PIPS
+                      hit_sl = price_diff <= -SL_PIPS
+                  else:  # SELL: untung kalau harga turun
+                      hit_tp = price_diff <= -TP_PIPS
+                      hit_sl = price_diff >= SL_PIPS
 
-                  status_icon = "✅ WIN" if is_win else "❌ LOSS"
-                  arah_lama = "BUY" if last_pred == 1 else "SELL"
-                  
-                  msg_close = (
-                      f"🔴 *[CLOSE ORDER - OPTIMIZED]*\n"
-                      f"-----------------------------\n"
-                      f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
-                      f"💰 *Harga Close:* `${spot_price}`\n"
-                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
-                      f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)"
-                  )
-                  send_telegram(msg_close)
-                  with open(log_file, "w") as f:
-                      json.dump(logs, f, indent=4)
-                  has_active_order = False
+                  timed_out = elapsed_hours >= TIMEOUT_HOURS
 
-          # --- 3. TRAINING EFESIEN: TRIPLE BARRIER DUA ARAH & BOBOT SAMPEL SPESIFIK ---
+                  if hit_tp or hit_sl or timed_out:
+                      if hit_tp and not hit_sl:
+                          result = "WIN"
+                      elif hit_sl and not hit_tp:
+                          result = "LOSS"
+                      else:
+                          # Timeout tanpa TP/SL kesentuh -> netral, TIDAK dihitung
+                          # sebagai WIN/LOSS di winrate (biar statistik jujur).
+                          result = "TIMEOUT"
+
+                      diff_pips = round(abs(price_diff), 2)
+                      signed_pips = diff_pips if result == "WIN" else (-diff_pips if result == "LOSS" else 0.0)
+
+                      last_log["status"] = "CLOSED"
+                      last_log["close_price"] = spot_price
+                      last_log["close_time"] = current_time_str
+                      last_log["result"] = result
+                      last_log["diff_pips"] = diff_pips
+                      last_log["signed_pips"] = signed_pips
+
+                      status_icon = {"WIN": "鉁� WIN", "LOSS": "鉂� LOSS", "TIMEOUT": "鈴� TIMEOUT (netral)"}[result]
+                      arah_lama = "BUY" if last_pred == 1 else "SELL"
+
+                      msg_close = (
+                          f"馃敶 *[CLOSE ORDER - OPTIMIZED]*\n"
+                          f"-----------------------------\n"
+                          f"鈴� *Waktu Close:* `{current_time_str}` UTC ({elapsed_hours:.1f} jam)\n"
+                          f"馃挵 *Harga Close:* `${spot_price}`\n"
+                          f"馃搶 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                          f"馃搳 *Hasil:* {status_icon} (`{signed_pips:+.2f}`)"
+                      )
+                      send_telegram(msg_close)
+                      with open(log_file, "w") as f:
+                          json.dump(logs, f, indent=4)
+                      has_active_order = False
+                  else:
+                      # Belum kena TP/SL, belum timeout -> order tetap OPEN,
+                      # JANGAN buka order baru di run ini.
+                      print(f"Order masih OPEN. Elapsed={elapsed_hours:.2f}j, diff={price_diff:+.2f} (TP={TP_PIPS}, SL={SL_PIPS}). Menunggu.")
+
+          # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
           model_file = "model_quant.pkl"
-          # Cek apakah model perlu di-retrain (misal: belum ada atau beda hari agar tidak berat tiap 15 menit)
-          should_retrain = not os.path.exists(model_file)
-          if os.path.exists(model_file):
-              # Bisa diatur retrain sekali sehari berdasarkan file mtime
-              file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(model_file), datetime.timezone.utc)
-              if (now_utc - file_mtime).days >= 1:
-                  should_retrain = pří = True
+          meta_file = "model_meta.json"
+
+          meta_data = {}
+          if os.path.exists(meta_file):
+              try:
+                  with open(meta_file, "r") as f:
+                      meta_data = json.load(f)
+              except:
+                  meta_data = {}
+
+          last_trained_date = meta_data.get("last_trained_date")
+          should_retrain = (not os.path.exists(model_file)) or (last_trained_date != current_date_str)
 
           if should_retrain:
-              print("Melakukan training ulang terjadwal (Daily Retrain)...")
+              print(f"Retrain hari ini ({current_date_str}). Terakhir training: {last_trained_date}")
               df_train = yf.download("GC=F", period="1y", interval="60m")
               if isinstance(df_train.columns, pd.MultiIndex):
                   df_train.columns = df_train.columns.get_level_values(0)
-              
+
               if not df_train.empty:
                   close = df_train['Close'].squeeze()
                   high = df_train['High'].squeeze()
@@ -154,7 +206,8 @@ jobs:
                   features_df['sma_trend'] = (close > close.rolling(window=50).mean()).astype(int)
 
                   # Triple Barrier Dua Arah (1 = Long Win, 0 = Short Win)
-                  tp_pips, sl_pips, timeout = 3.0, 2.0, 5
+                  # Pakai konstanta yang SAMA dengan evaluasi live di atas.
+                  tp_pips, sl_pips, timeout = TP_PIPS, SL_PIPS, TIMEOUT_HOURS
                   labels = []
                   for i in range(len(close) - timeout):
                       ep = close.iloc[i]
@@ -164,7 +217,7 @@ jobs:
                       hit_tp_long = (hs >= ep + tp_pips).any()
                       hit_sl_long = (ls <= ep - sl_pips).any()
                       hit_tp_short = (ls <= ep - tp_pips).any()
-                      hit_sl_short = (hs >= ep + tp_pips).any()
+                      hit_sl_short = (hs >= ep + sl_pips).any()
 
                       if hit_tp_long and not hit_sl_long:
                           labels.append(1) # Valid Long/Buy
@@ -180,24 +233,67 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
-                  # Perbaikan Bobot Sampel Berbasis Jarak Kemiripan (Feature Distance Weighting)
-                  sample_weights = np.ones(len(X))
-                  if logs:
-                      # Ambil fitur dari trade yang pernah loss untuk diberi penalti lokal pada baris data historis yang mirip
-                      for log in logs:
-                          if log.get("result") == "LOSS":
-                              # Berikan bobot lebih pada sampel historis yang memiliki volatilitas/pergerakan berdekatan
-                              sample_weights = np.where(X['volatility'] > 0, sample_weights * 1.01, sample_weights)
+                  try:
+                      n = len(X)
 
-                  model = make_pipeline(
-                      StandardScaler(),
-                      MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=800, random_state=42)
-                  )
-                  model.fit(X, y, mlpclassifier__sample_weight=sample_weights[:len(X)])
-                  joblib.dump(model, model_file)
+                      sample_weights = np.ones(n)
+                      loss_vols = [
+                          log.get("volatility_at_open")
+                          for log in logs
+                          if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
+                      ]
+                      if loss_vols:
+                          vol_std = X['volatility'].std() or 1e-9
+                          for lv in loss_vols:
+                              close_mask = (X['volatility'] - lv).abs() <= vol_std
+                              sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
+
+                      probs = sample_weights / sample_weights.sum()
+                      rng = np.random.RandomState(42)
+                      resample_idx = rng.choice(n, size=n, replace=True, p=probs)
+                      X_w = X.iloc[resample_idx]
+                      y_w = y.iloc[resample_idx]
+
+                      # --- CONTINUAL LEARNING (warm_start) ---
+                      model = None
+                      if os.path.exists(model_file):
+                          try:
+                              model = joblib.load(model_file)
+                              model.named_steps["mlpclassifier"].warm_start = True
+                              print("Model lama di-load, lanjut training (warm_start).")
+                          except Exception as e:
+                              print("Gagal load model lama, bikin model baru:", e)
+                              model = None
+
+                      if model is None:
+                          model = make_pipeline(
+                              StandardScaler(),
+                              MLPClassifier(
+                                  hidden_layer_sizes=(64, 32),
+                                  max_iter=800,
+                                  warm_start=True,
+                                  random_state=42
+                              )
+                          )
+
+                      model.fit(X_w, y_w)
+                      joblib.dump(model, model_file)
+
+                      meta_data["last_trained_date"] = current_date_str
+                      meta_data["n_samples"] = n
+                      with open(meta_file, "w") as f:
+                          json.dump(meta_data, f, indent=2)
+                      print(f"Model berhasil ditraining ulang (continual). n_samples={n}")
+                  except Exception as e:
+                      print("Error training model quant:", e)
+              else:
+                  print("Data training kosong, skip training kali ini.")
+          else:
+              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain, langsung pakai model_quant.pkl yang tersimpan.")
 
           # --- 4. PREDIKSI LIVE ---
           prediction, confidence = -1, 0
+          live_vol_value = None
           df_live = yf.download("GC=F", period="5d", interval="60m")
           if isinstance(df_live.columns, pd.MultiIndex):
               df_live.columns = df_live.columns.get_level_values(0)
@@ -207,25 +303,29 @@ jobs:
                   close_live = df_live['Close'].squeeze()
                   live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 25)]
                   live_vol = close_live.rolling(window=14).std().iloc[-1]
+                  live_vol_value = float(live_vol)
                   live_trend = 1.0 if close_live.iloc[-1] > close_live.rolling(window=50).mean().iloc[-1] else 0.0
-                  
+
                   live_vector = np.array([live_features + [live_vol, live_trend]])
                   ml_model = joblib.load(model_file)
-                  
+
                   pred_class = ml_model.predict(live_vector)[0]
                   proba = ml_model.predict_proba(live_vector)[0]
-                  
+
                   prediction = int(pred_class)
                   confidence = int(max(proba) * 100)
               except Exception as e:
                   print("Error prediksi live:", e)
 
           # --- 5. EKSEKUSI SINYAL & LAPORAN TELEGRAM ---
+          # has_active_order sekarang hanya jadi False kalau order lama sudah
+          # betulan CLOSED (TP/SL/timeout kena) di langkah 2 -> mencegah bot
+          # membuka order baru menimpa order yang belum genap dievaluasi.
           if not has_active_order:
               if confidence >= 85 and spot_price is not None:
-                  arah_teks = "📈 BUY / NAIK" if prediction == 1 else "📉 SELL / TURUN"
+                  arah_teks = "馃搱 BUY / NAIK" if prediction == 1 else "馃搲 SELL / TURUN"
                   ai_statement = "Setup tervalidasi oleh Triple Barrier dua arah."
-                  
+
                   if GEMINI_API_KEY:
                       try:
                           genai.configure(api_key=GEMINI_API_KEY)
@@ -244,6 +344,7 @@ jobs:
                       "spot_price": spot_price,
                       "prediction": prediction,
                       "confidence": confidence,
+                      "volatility_at_open": live_vol_value,
                       "close_price": None,
                       "result": None,
                       "diff_pips": 0,
@@ -257,15 +358,16 @@ jobs:
                       json.dump(logs, f, indent=4)
 
                   def calc_stats(filtered_logs):
-                      closed = [l for l in filtered_logs if l.get("status") == "CLOSED"]
+                      # TIMEOUT dikeluarkan dari winrate, cuma WIN/LOSS yang dihitung.
+                      closed = [l for l in filtered_logs if l.get("status") == "CLOSED" and l.get("result") in ("WIN", "LOSS")]
                       total = len(closed)
                       if total == 0:
-                          return 0, 0, 0.0, 0.0, "0W-0L (0.0%) | 0.0 pips"
+                          return 0, 0, 0.0, 0.0, "0W-0L (0.0%) | 0.00 pts"
                       wins = sum(1 for l in closed if l.get("result") == "WIN")
                       losses = sum(1 for l in closed if l.get("result") == "LOSS")
                       winrate = round((wins / total) * 100, 1)
                       total_pips = sum(l.get("signed_pips", 0) for l in closed)
-                      return wins, losses, winrate, total_pips, f"{wins}W-{losses}L ({winrate}%) | {total_pips:+.1f} pips"
+                      return wins, losses, winrate, total_pips, f"{wins}W-{losses}L ({winrate}%) | {total_pips:+.2f} pts"
 
                   daily_logs = [l for l in logs if l.get("date") == current_date_str]
                   weekly_logs = [l for l in logs if l.get("close_time") and datetime.datetime.strptime(l["close_time"], "%Y-%m-%d %H:%M:%S").isocalendar()[:2] == (current_year, current_week)]
@@ -277,23 +379,57 @@ jobs:
 
                   advisor_tip = "Sistem berjalan optimal dengan arsitektur Quant murni."
                   if (w_w + w_l) >= 3 and w_wr < 40:
-                      advisor_tip = "💡 *Saran AI:* Winrate mingguan di bawah 40%. Naikkan threshold confidence ke `90`."
+                      advisor_tip = "馃挕 *Saran AI:* Winrate mingguan di bawah 40%. Naikkan threshold confidence ke `90`."
 
                   msg_open = (
-                      f"🟢 *[OPEN ORDER - QUANT OPTIMIZED]*\n"
+                      f"馃煝 *[OPEN ORDER - QUANT OPTIMIZED]*\n"
                       f"-----------------------------\n"
-                      f"⏱ *Waktu Entry:* `{current_time_str}` UTC\n"
-                      f"💰 *Harga Entry:* `${spot_price}`\n"
-                      f"🔮 *Posisi Baru:* *{arah_teks}*\n"
-                      f"🎯 *Keyakinan AI:* `{confidence}%`\n\n"
-                      f"📐 *Analisis:* _{ai_statement}_\n\n"
-                      f"📈 *Statistik Performa:*\n"
-                      f"• *Harian:* {stat_harian}\n"
-                      f"• *Mingguan:* {stat_mingguan}\n"
-                      f"• *Bulanan:* {stat_bulanan}\n\n"
+                      f"鈴� *Waktu Entry:* `{current_time_str}` UTC\n"
+                      f"馃挵 *Harga Entry:* `${spot_price}`\n"
+                      f"馃敭 *Posisi Baru:* *{arah_teks}*\n"
+                      f"馃幆 *Keyakinan AI:* `{confidence}%`\n"
+                      f"馃幆 *TP/SL:* `+{TP_PIPS}` / `-{SL_PIPS}` (timeout {TIMEOUT_HOURS}j)\n\n"
+                      f"馃搻 *Analisis:* _{ai_statement}_\n\n"
+                      f"馃搱 *Statistik Performa:*\n"
+                      f"鈥� *Harian:* {stat_harian}\n"
+                      f"鈥� *Mingguan:* {stat_mingguan}\n"
+                      f"鈥� *Bulanan:* {stat_bulanan}\n\n"
                       f"{advisor_tip}"
                   )
                   send_telegram(msg_open)
+              else:
+                  print("Tidak ada order aktif, tapi confidence di bawah threshold atau spot_price kosong. Skip.")
+          else:
+              print("Order lama masih OPEN, skip pembukaan order baru pada run ini.")
+
+          # --- 6. TENTUKAN APAKAH PERLU BACKUP MODEL KE GITHUB RELEASE ---
+          last_backup_date = meta_data.get("last_backup_date")
+          should_backup = False
+          if os.path.exists(model_file):
+              if last_backup_date is None:
+                  should_backup = True
+              else:
+                  try:
+                      last_dt = datetime.datetime.strptime(last_backup_date, "%Y-%m-%d").date()
+                      if (now_utc.date() - last_dt).days >= 7:
+                          should_backup = True
+                  except:
+                      should_backup = True
+
+          backup_tag = f"model-backup-{current_date_str}"
+          if should_backup:
+              meta_data["last_backup_date"] = current_date_str
+              with open(meta_file, "w") as f:
+                  json.dump(meta_data, f, indent=2)
+              print(f"Model akan di-backup ke GitHub Release: {backup_tag}")
+          else:
+              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup minggu ini.")
+
+          gh_output_path = os.environ.get("GITHUB_OUTPUT")
+          if gh_output_path:
+              with open(gh_output_path, "a") as f:
+                  f.write(f"should_backup={'true' if should_backup else 'false'}\n")
+                  f.write(f"backup_tag={backup_tag}\n")
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -310,3 +446,14 @@ jobs:
           git add signal_log.json
           git commit -m "Update signal log with optimized quant execution" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
+
+      - name: Weekly model backup to GitHub Release (portable, independent of cache/account)
+        if: steps.quant_agent.outputs.should_backup == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.quant_agent.outputs.backup_tag }}"
+          gh release create "$TAG" model_quant.pkl model_meta.json \
+            --title "Model snapshot $TAG" \
+            --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
+            || echo "Release $TAG sudah ada atau gagal dibuat, skip."
