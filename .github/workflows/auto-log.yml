@@ -19,6 +19,20 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Get current date (for cache key)
+        id: date
+        run: echo "today=$(date -u +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached model (persists within the same UTC day)
+        uses: actions/cache@v4
+        with:
+          path: model_quant.pkl
+          # Cache key changes once per day -> forces retrain once/day,
+          # but model survives across the ~96 runs within that day.
+          key: quant-model-${{ steps.date.outputs.today }}
+          restore-keys: |
+            quant-model-
+
       - name: Install dependencies
         run: |
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
@@ -128,13 +142,11 @@ jobs:
 
           # --- 3. TRAINING EFESIEN: TRIPLE BARRIER DUA ARAH & BOBOT SAMPEL SPESIFIK ---
           model_file = "model_quant.pkl"
-          # Cek apakah model perlu di-retrain (misal: belum ada atau beda hari agar tidak berat tiap 15 menit)
+          # Cek apakah model perlu di-retrain. Dengan actions/cache berkunci tanggal,
+          # file ini hanya akan ADA jika sudah pernah dibuat pada tanggal UTC yang sama.
+          # Kalau belum ada -> retrain. Kalau ada -> pakai yang sudah di-cache (tidak retrain
+          # tiap 15 menit lagi).
           should_retrain = not os.path.exists(model_file)
-          if os.path.exists(model_file):
-              # Bisa diatur retrain sekali sehari berdasarkan file mtime
-              file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(model_file), datetime.timezone.utc)
-              if (now_utc - file_mtime).days >= 1:
-                  should_retrain = pří = True
 
           if should_retrain:
               print("Melakukan training ulang terjadwal (Daily Retrain)...")
@@ -164,7 +176,10 @@ jobs:
                       hit_tp_long = (hs >= ep + tp_pips).any()
                       hit_sl_long = (ls <= ep - sl_pips).any()
                       hit_tp_short = (ls <= ep - tp_pips).any()
-                      hit_sl_short = (hs >= ep + tp_pips).any()
+                      # FIX: SL untuk posisi short harus pakai sl_pips, bukan tp_pips.
+                      # Sebelumnya baris ini identik dgn hit_tp_long, sehingga bias
+                      # membuat label SELL (0) menang lebih sering saat training.
+                      hit_sl_short = (hs >= ep + sl_pips).any()
 
                       if hit_tp_long and not hit_sl_long:
                           labels.append(1) # Valid Long/Buy
@@ -180,14 +195,22 @@ jobs:
                   X = features_df[[col for col in features_df.columns if col != 'target']]
                   y = features_df['target']
 
-                  # Perbaikan Bobot Sampel Berbasis Jarak Kemiripan (Feature Distance Weighting)
+                  # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance Weighting)
+                  # Untuk tiap trade historis kita yang LOSS, beri bobot lebih besar pada
+                  # baris training yang volatilitasnya mirip (dalam 1 std dev) dengan
+                  # volatilitas saat loss itu terjadi -> model lebih hati-hati di kondisi
+                  # market yang mirip dengan kondisi saat kita rugi.
                   sample_weights = np.ones(len(X))
-                  if logs:
-                      # Ambil fitur dari trade yang pernah loss untuk diberi penalti lokal pada baris data historis yang mirip
-                      for log in logs:
-                          if log.get("result") == "LOSS":
-                              # Berikan bobot lebih pada sampel historis yang memiliki volatilitas/pergerakan berdekatan
-                              sample_weights = np.where(X['volatility'] > 0, sample_weights * 1.01, sample_weights)
+                  loss_vols = [
+                      log.get("volatility_at_open")
+                      for log in logs
+                      if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
+                  ]
+                  if loss_vols:
+                      vol_std = X['volatility'].std() or 1e-9
+                      for lv in loss_vols:
+                          close_mask = (X['volatility'] - lv).abs() <= vol_std
+                          sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
 
                   model = make_pipeline(
                       StandardScaler(),
@@ -195,9 +218,12 @@ jobs:
                   )
                   model.fit(X, y, mlpclassifier__sample_weight=sample_weights[:len(X)])
                   joblib.dump(model, model_file)
+              else:
+                  print("Data training kosong, skip training kali ini.")
 
           # --- 4. PREDIKSI LIVE ---
           prediction, confidence = -1, 0
+          live_vol_value = None
           df_live = yf.download("GC=F", period="5d", interval="60m")
           if isinstance(df_live.columns, pd.MultiIndex):
               df_live.columns = df_live.columns.get_level_values(0)
@@ -207,6 +233,7 @@ jobs:
                   close_live = df_live['Close'].squeeze()
                   live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 25)]
                   live_vol = close_live.rolling(window=14).std().iloc[-1]
+                  live_vol_value = float(live_vol)
                   live_trend = 1.0 if close_live.iloc[-1] > close_live.rolling(window=50).mean().iloc[-1] else 0.0
                   
                   live_vector = np.array([live_features + [live_vol, live_trend]])
@@ -244,6 +271,7 @@ jobs:
                       "spot_price": spot_price,
                       "prediction": prediction,
                       "confidence": confidence,
+                      "volatility_at_open": live_vol_value,
                       "close_price": None,
                       "result": None,
                       "diff_pips": 0,
