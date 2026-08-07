@@ -109,42 +109,85 @@ jobs:
           if logs and logs[-1].get("status") == "OPEN":
               has_active_order = True
 
-          # --- 2. EVALUASI & CLOSE ORDER ---
+          # --- 2. EVALUASI & CLOSE ORDER (REAL TP/SL/TIMEOUT ENFORCEMENT) ---
+          # Sebelumnya order ditutup begitu saja di run berikutnya kapanpun itu
+          # kejadian, pakai harga saat itu -- tanpa peduli apakah harga sudah
+          # bergerak sejauh TP/SL yang dipakai buat melatih model (3.0 / 2.0)
+          # atau belum. Ini bikin exit price meleset jauh dari target training
+          # (apalagi kalau ada run yang gagal/skip sehingga order nyangkut OPEN
+          # berjam-jam). Sekarang tiap run (~tiap 15 menit) order OPEN dicek
+          # terhadap TP, SL, dan timeout 5 bar (5 jam, karena training pakai
+          # candle 1 jam) -- baru ditutup kalau salah satu kena. Kalau belum,
+          # order dibiarkan OPEN dan TIDAK ada order baru dibuka run ini.
+          TP_PIPS, SL_PIPS, TIMEOUT_HOURS = 3.0, 2.0, 5
+
           if has_active_order and spot_price is not None:
               last_log = logs[-1]
               last_pred = last_log.get("prediction")
               last_price = last_log.get("spot_price")
-              
-              if last_price and last_pred is not None:
-                  price_diff = spot_price - last_price
-                  diff_pips = round(price_diff * 10, 1)
-                  actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
-                  
-                  is_win = (last_pred == actual_direction)
-                  last_log["status"] = "CLOSED"
-                  last_log["close_price"] = spot_price
-                  last_log["close_time"] = current_time_str
-                  last_log["result"] = "WIN" if is_win else "LOSS"
-                  
-                  signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
-                  last_log["diff_pips"] = abs(diff_pips)
-                  last_log["signed_pips"] = signed_pips
+              open_time_str = last_log.get("open_time")
 
-                  status_icon = "✅ WIN" if is_win else "❌ LOSS"
-                  arah_lama = "BUY" if last_pred == 1 else "SELL"
-                  
-                  msg_close = (
-                      f"🔴 *[CLOSE ORDER - OPTIMIZED]*\n"
-                      f"-----------------------------\n"
-                      f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
-                      f"💰 *Harga Close:* `${spot_price}`\n"
-                      f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
-                      f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips)"
-                  )
-                  send_telegram(msg_close)
-                  with open(log_file, "w") as f:
-                      json.dump(logs, f, indent=4)
-                  has_active_order = False
+              elapsed_hours = None
+              if open_time_str:
+                  try:
+                      open_dt = datetime.datetime.strptime(open_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                      elapsed_hours = (now_utc - open_dt).total_seconds() / 3600.0
+                  except:
+                      elapsed_hours = None
+
+              if last_price is not None and last_pred is not None:
+                  if last_pred == 1:  # posisi BUY/long
+                      hit_tp = spot_price >= last_price + TP_PIPS
+                      hit_sl = spot_price <= last_price - SL_PIPS
+                  else:  # posisi SELL/short
+                      hit_tp = spot_price <= last_price - TP_PIPS
+                      hit_sl = spot_price >= last_price + SL_PIPS
+
+                  hit_timeout = (elapsed_hours is not None) and (elapsed_hours >= TIMEOUT_HOURS)
+
+                  if hit_tp or hit_sl or hit_timeout:
+                      price_diff = spot_price - last_price
+                      diff_pips = round(price_diff * 10, 1)
+
+                      if hit_tp:
+                          close_reason = "TP"
+                          is_win = True
+                      elif hit_sl:
+                          close_reason = "SL"
+                          is_win = False
+                      else:
+                          close_reason = "TIMEOUT"
+                          actual_direction = 1 if spot_price > last_price else (0 if spot_price < last_price else -1)
+                          is_win = (last_pred == actual_direction)
+
+                      last_log["status"] = "CLOSED"
+                      last_log["close_price"] = spot_price
+                      last_log["close_time"] = current_time_str
+                      last_log["close_reason"] = close_reason
+                      last_log["result"] = "WIN" if is_win else "LOSS"
+
+                      signed_pips = abs(diff_pips) if is_win else -abs(diff_pips)
+                      last_log["diff_pips"] = abs(diff_pips)
+                      last_log["signed_pips"] = signed_pips
+
+                      status_icon = "✅ WIN" if is_win else "❌ LOSS"
+                      arah_lama = "BUY" if last_pred == 1 else "SELL"
+
+                      msg_close = (
+                          f"🔴 *[CLOSE ORDER - {close_reason}]*\n"
+                          f"-----------------------------\n"
+                          f"⏱ *Waktu Close:* `{current_time_str}` UTC\n"
+                          f"💰 *Harga Close:* `${spot_price}`\n"
+                          f"📌 *Order Asal:* {arah_lama} di `${last_price}`\n"
+                          f"📊 *Hasil:* {status_icon} (`{signed_pips:+.1f}` pips) — alasan: {close_reason}"
+                      )
+                      send_telegram(msg_close)
+                      with open(log_file, "w") as f:
+                          json.dump(logs, f, indent=4)
+                      has_active_order = False
+                  else:
+                      status_txt = f"{elapsed_hours:.2f}h" if elapsed_hours is not None else "?"
+                      print(f"Order masih OPEN (belum kena TP/SL/timeout). Elapsed: {status_txt}")
 
           # --- 3. TRAINING: TRIPLE BARRIER DUA ARAH & CONTINUAL LEARNING ---
           model_file = "model_quant.pkl"
@@ -442,3 +485,5 @@ jobs:
             --title "Model snapshot $TAG" \
             --notes "Weekly automated snapshot of model_quant.pkl for portability (repo/account migration, disaster recovery). Not used by the bot at runtime -- runtime state lives in actions/cache." \
             || echo "Release $TAG sudah ada atau gagal dibuat, skip."
+
+16
