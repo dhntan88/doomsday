@@ -27,10 +27,10 @@ jobs:
         env:
           GIST_TOKEN: ${{ secrets.GIST_SECRET_TOKEN }}
         run: |
-          # Mendownload skrip python privat langsung dari Gist Anda menggunakan token autentikasi
+          # Mendownload skrip python privat langsung dari Gist Anda menggunakan ID baru
           curl -H "Authorization: token $GIST_TOKEN" \
                -H "Accept: application/vnd.github.v3.raw" \
-               -L https://api.github.com/gists/3bb46c17a5f06c72d16e44ad33dd9b43 \
+               -L https://api.github.com/gists/43873d10bcc8b9096bd895c9ebd537a5 \
                -o quant_agent.py
 
       - name: Run Downloaded Quant Agent
