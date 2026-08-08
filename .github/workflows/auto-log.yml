@@ -36,13 +36,13 @@ jobs:
         run: |
           python quant_agent.py
 
-      - name: Commit changes (Hanya Log)
+      - name: Commit changes (Log & Model)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git stash
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
-          git add signal_log.json
-          git commit -m "Update signal log via Public Gist execution" || echo "No changes"
+          git add signal_log.json model_quant.pkl
+          git commit -m "Update signal log and ML model via Gist execution" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
