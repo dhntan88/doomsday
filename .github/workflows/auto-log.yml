@@ -23,19 +23,10 @@ jobs:
         run: |
           pip install requests pandas numpy scikit-learn joblib yfinance google-generativeai
 
-      - name: Download Secure Quant Script from Gist
-        env:
-          GIST_TOKEN: ${{ secrets.GIST_SECRET_TOKEN }}
+      - name: Download Quant Script from Public Gist
         run: |
-          # Menggunakan curl dengan penanganan error yang memastikan isi Gist murni ter-download
-          curl -sSL -H "Authorization: token $GIST_TOKEN" \
-               -H "Accept: application/vnd.github.v3.raw" \
-               https://api.github.com/gists/43873d10bcc8b9096bd895c9ebd537a5 \
-               -o quant_agent.py
-               
-          # Memeriksa isi file yang didownload untuk memastikan tidak error/kosong
-          echo "--- CEK ISI FILE QUANT_AGENT.PY ---"
-          head -n 5 quant_agent.py
+          # Mendownload langsung menggunakan link raw Gist publik
+          curl -sSL https://gist.githubusercontent.com/dhntan88/43873d10bcc8b9096bd895c9ebd537a5/raw/quant_agent.py -o quant_agent.py
 
       - name: Run Downloaded Quant Agent
         env:
@@ -53,5 +44,5 @@ jobs:
           git pull origin main --rebase || echo "No rebase needed"
           git stash pop || echo "No stash to pop"
           git add signal_log.json
-          git commit -m "Update signal log via Gist-secured execution" || echo "No changes"
+          git commit -m "Update signal log via Public Gist execution" || echo "No changes"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/dhntan88/doomsday.git HEAD:main
